@@ -1,0 +1,12 @@
+node_modules/
+.env
+.env.*
+!.env.example
+data/
+data-test/
+**/settings.enc*
+**/settings.key
+**/cos-objects.json*
+**/access.key
+**/access-sessions.json*
+npm-debug.log

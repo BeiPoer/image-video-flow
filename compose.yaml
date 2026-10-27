@@ -1,0 +1,15 @@
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      AI_FLOW_PORT: "4173"
+      AI_FLOW_DATA_DIR: /app/data
+    ports:
+      - "${AI_FLOW_PORT:-4173}:4173"
+    volumes:
+      - type: bind
+        source: ${AI_FLOW_DATA_DIR:-./data}
+        target: /app/data

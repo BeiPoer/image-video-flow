@@ -1,0 +1,15 @@
+{
+  "name": "ai-media-flow",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AI image and video workflow workbench",
+  "type": "module",
+  "scripts": {
+    "start": "node --env-file-if-exists=.env server.js",
+    "dev": "node --env-file-if-exists=.env --watch server.js",
+    "check": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "cos-nodejs-sdk-v5": "3.0.0"
+  }
+}
