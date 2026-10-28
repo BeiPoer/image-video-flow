@@ -11,8 +11,8 @@ async function openSettings() {
     settingsToken = values.settingsToken;
     for (const name of ['OPENAI_BASE_URL', 'OPENAI_IMAGE_MODEL', 'SEEDANCE_BASE_URL', 'SEEDANCE_MODEL', 'VIDEO_API_TYPE', 'PUBLIC_ASSET_BASE_URL']) form.elements[name].value = values[name];
     lastVideoType = values.VIDEO_API_TYPE || 'openai';
-    $('#publicAssetBaseField').hidden = lastVideoType !== 'kyyReactApi' || state.cloudMediaEnabled;
-    $('#publicAssetHelp').hidden = lastVideoType !== 'kyyReactApi' || state.cloudMediaEnabled;
+    $('#publicAssetBaseField').hidden = !['kyyReactApi','openai'].includes(lastVideoType) || state.cloudMediaEnabled;
+    $('#publicAssetHelp').hidden = !['kyyReactApi','openai'].includes(lastVideoType) || state.cloudMediaEnabled;
     for (const [name, label] of [['OPENAI_API_KEY', '#openaiKeyState'], ['SEEDANCE_API_KEY', '#seedanceKeyState']]) {
       const configured = values[name + '_CONFIGURED'];
       form.elements[name].value = '';
@@ -92,8 +92,8 @@ $('#videoApiType').addEventListener('change', () => {
   if (model.value === previous.model) model.value = next.model;
   lastVideoType = nextType;
   updateVideoApiHelp();
-  $('#publicAssetBaseField').hidden = nextType !== 'kyyReactApi' || state.cloudMediaEnabled;
-  $('#publicAssetHelp').hidden = nextType !== 'kyyReactApi' || state.cloudMediaEnabled;
+  $('#publicAssetBaseField').hidden = !['kyyReactApi','openai'].includes(nextType) || state.cloudMediaEnabled;
+  $('#publicAssetHelp').hidden = !['kyyReactApi','openai'].includes(nextType) || state.cloudMediaEnabled;
 });
 
 $('#settingsButton').addEventListener('click',openSettings);

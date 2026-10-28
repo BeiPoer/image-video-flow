@@ -10,7 +10,7 @@ import { pipeline } from 'node:stream/promises';
 import { dirname, extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import crypto from 'node:crypto';
-import { createSettingsStore } from './model-settings.js';
+import { createSettingsStore, validateSettings } from './model-settings.js';
 import { generateVideo, videoRequest } from './video-api.js';
 import { createCosStore } from './cos-storage.js';
 import { downloadImage } from './image-source.js';
@@ -223,9 +223,14 @@ async function runTask(task, state, config = modelSettings.current()) {
     }
     if (task.kind === 'video' && configured('seedance', config)) {
       let videoParams = task.params;
+      const reference=sourceId=>{
+        const record=requireMedia(findMedia(state,sourceId));
+        if(task.videoApiType==='kyyReactApi'||cosStorage.enabled)return kyyReferenceUrl(record,sourceId);
+        if(task.videoApiType==='openai'&&isLocalMedia(record))return config.PUBLIC_ASSET_BASE_URL+'/api/media/'+encodeURIComponent(sourceId);
+        return record.dataUrl;
+      };
       if (['kyyReactApi','openai'].includes(task.videoApiType) && (task.params.videoMedia || task.params.kyyMedia)) {
         const selections=task.params.videoMedia || task.params.kyyMedia; videoParams={...task.params}; delete videoParams.videoMedia; delete videoParams.kyyMedia;
-        const reference=sourceId=>{const record=requireMedia(findMedia(state,sourceId));return task.videoApiType==='kyyReactApi'||cosStorage.enabled?kyyReferenceUrl(record,sourceId):record.dataUrl;};
         for(const [source,target] of [['referenceImageIds','referenceImages'],['referenceVideoIds','referenceVideos'],['referenceAudioIds','referenceAudios']]){
           const ids=selections[source]||[];
           videoParams[target]=await Promise.all(ids.map(reference));
@@ -234,7 +239,7 @@ async function runTask(task, state, config = modelSettings.current()) {
         for(const [source,target] of [['firstImageId','firstImage'],['lastImageId','lastImage']])if(selections[source])videoParams[target]=await reference(selections[source]);
       }
       const inputImageUrl = task.inputImageId
-        ? (cosStorage.enabled || task.videoApiType === 'kyyReactApi' ? await kyyReferenceUrl(findMedia(state, task.inputImageId), task.inputImageId) : requireMedia(findMedia(state, task.inputImageId)).dataUrl)
+        ? await reference(task.inputImageId)
         : task.inputImageUrl;
       const video = await generateVideo(task.prompt, inputImageUrl, videoParams, config, async update => {
         Object.assign(task, update); await saveState(state);
@@ -290,7 +295,11 @@ function serveInlineMedia(req,res,record) {
 async function api(req, res, pathname, url) {
   await cleanExpiredMedia();
   const mediaRoute=/^\/api\/media\/((?:asset|result)-[A-Za-z0-9_-]+)$/.exec(pathname);
-  if(mediaRoute && ['GET','HEAD'].includes(req.method))return serveInlineMedia(req,res,findMedia(await readState(),mediaRoute[1]));
+  if(mediaRoute && ['GET','HEAD'].includes(req.method)){
+    const record=requireMedia(findMedia(await readState(),mediaRoute[1]));
+    const localVideo=/^\/api\/video-results\/(task-[a-f0-9-]+\.mp4)$/.exec(record.dataUrl || '');
+    return localVideo?serveVideo(req,res,localVideo[1]):serveInlineMedia(req,res,record);
+  }
   if (pathname.startsWith('/api/video-results/') && ['GET','HEAD'].includes(req.method)) return serveVideo(req,res,pathname.slice('/api/video-results/'.length));
   if (pathname.startsWith('/api/kyy-assets/') && ['GET','HEAD'].includes(req.method)) {
     const sourceId=pathname.slice('/api/kyy-assets/'.length), mime=url.searchParams.get('type')||'', expires=url.searchParams.get('expires')||'', signature=url.searchParams.get('signature')||'';
@@ -446,6 +455,17 @@ async function api(req, res, pathname, url) {
     if(body.kind==='video'&&configured('seedance',config)){
       try{
         const media=videoMedia||{};
+        const ids=[body.inputImageId,...(media.referenceImageIds||[]),...(media.referenceVideoIds||[]),...(media.referenceAudioIds||[]),media.firstImageId,media.lastImageId].filter(Boolean);
+        if(config.VIDEO_API_TYPE==='openai'){
+          const records=ids.map(sourceId=>requireMedia(findMedia(state,sourceId)));
+          if(records.some(record=>kyyRecordKind(record)==='image'&&!['image/png','image/jpeg','image/webp'].includes(kyyRecordMime(record))))return error(res,'视频参考图仅支持 PNG、JPEG 或 WebP，请替换不支持的素材',400);
+          if(!cosStorage.enabled&&records.some(isLocalMedia)){
+            const protocol=req.headers['x-forwarded-proto']?.split(',')[0].trim() || (req.socket.encrypted?'https':'http');
+            const candidate=config.PUBLIC_ASSET_BASE_URL || req.headers.origin || protocol+'://'+req.headers.host;
+            try { config.PUBLIC_ASSET_BASE_URL=validateSettings({PUBLIC_ASSET_BASE_URL:candidate},config).PUBLIC_ASSET_BASE_URL; }
+            catch { return error(res,'视频参考图需要公网 HTTPS 地址，请通过公网 HTTPS 访问工作台，或在模型设置填写素材访问地址',400); }
+          }
+        }
         const checked=videoMedia!==undefined?{...params,referenceImages:(media.referenceImageIds||[]).map(()=> 'https://asset-validation.invalid/image'),referenceVideos:(media.referenceVideoIds||[]).map(()=> 'https://asset-validation.invalid/video'),referenceAudios:(media.referenceAudioIds||[]).map(()=> 'https://asset-validation.invalid/audio'),firstImage:media.firstImageId?'https://asset-validation.invalid/first':params.firstImage,lastImage:media.lastImageId?'https://asset-validation.invalid/last':params.lastImage}:params;
         videoRequest(body.prompt,body.inputImageUrl,checked,config);
       }catch(err){return error(res,err.message,err.status||400);}
@@ -470,7 +490,8 @@ async function serve(req, res) {
     }
     // Providers cannot log in; this narrow GET/HEAD route still requires its existing expiring HMAC signature.
     const signedMedia=pathname.startsWith('/api/kyy-assets/')&&['GET','HEAD'].includes(req.method);
-    if(!signedMedia&&!access.session(req)){
+    const publicMedia=/^(?:\/api\/media\/(?:asset|result)-[A-Za-z0-9_-]+|\/api\/video-results\/task-[a-f0-9-]+\.mp4)$/.test(pathname)&&['GET','HEAD'].includes(req.method);
+    if(!signedMedia&&!publicMedia&&!access.session(req)){
       if(pathname.startsWith('/api/')||pathname!=='/')return send(res,401,{error:'请先输入访问密码',code:'AUTH_REQUIRED'});
       res.writeHead(303,{location:'/login?next='+encodeURIComponent(url.pathname+url.search),'cache-control':'no-store'});return res.end();
     }

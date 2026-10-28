@@ -5,7 +5,7 @@ import {join} from 'node:path';
 import {startWorkflowServer,png} from './fixtures/workflow-server.js';
 import {retentionMs} from '../media-retention.js';
 
-test('bootstrap excludes inline media and copied task inputs; authenticated media requests preserve original bytes and ranges',async t=>{
+test('bootstrap stays private and small; public read-only media preserves bytes, ranges and expiry checks',async t=>{
   const bytes=Buffer.alloc(2*1024*1024,123),source='data:image/png;base64,'+bytes.toString('base64'),createdAt=new Date().toISOString();
   const svg='<svg xmlns="http://www.w3.org/2000/svg"><text>demo</text></svg>';
   const state={projects:[{id:'p',name:'项目'}],shots:[{id:'s',projectId:'p'}],assets:[
@@ -27,19 +27,21 @@ test('bootstrap excludes inline media and copied task inputs; authenticated medi
   assert.equal(asset.dataUrl,'/api/media/asset-large');assert.equal(asset.mime,'image/png');assert.equal(asset.name,'原图');
   assert.equal(payload.tasks[0].inputImageUrl,undefined);assert.deepEqual(payload.tasks[0].params,{duration:8,videoMedia:{referenceImageIds:['asset-large']}});
   assert.equal(payload.results[2].dataUrl,'https://example.test/remote.mp4');
-  assert.equal((await fetch(app.base+asset.dataUrl)).status,401);
-  const image=await app.fetch(app.base+asset.dataUrl);
+  assert.equal((await fetch(app.base+'/api/bootstrap')).status,401);
+  const image=await fetch(app.base+asset.dataUrl);
+  assert.equal(image.status,200);
   assert.equal(image.headers.get('content-type'),'image/png');assert.equal(image.headers.get('x-content-type-options'),'nosniff');
   assert.deepEqual(Buffer.from(await image.arrayBuffer()),bytes);
-  const head=await app.fetch(app.base+asset.dataUrl,{method:'HEAD'});assert.equal(head.headers.get('content-length'),String(bytes.length));assert.equal(await head.text(),'');
-  const generated=await app.fetch(app.base+payload.results[0].dataUrl);assert.deepEqual(Buffer.from(await generated.arrayBuffer()),Buffer.from(png,'base64'));
+  const head=await fetch(app.base+asset.dataUrl,{method:'HEAD'});assert.equal(head.headers.get('content-length'),String(bytes.length));assert.equal(await head.text(),'');
+  const generated=await fetch(app.base+payload.results[0].dataUrl);assert.deepEqual(Buffer.from(await generated.arrayBuffer()),Buffer.from(png,'base64'));
   const demo=await app.fetch(app.base+payload.results[1].dataUrl);assert.equal(await demo.text(),svg);assert.match(demo.headers.get('content-security-policy'),/sandbox/);
   for(const name of ['audio','video']){
     const range=await app.fetch(app.base+'/api/media/asset-'+name,{headers:{range:'bytes=1-3'}});
     assert.equal(range.status,206);assert.equal(range.headers.get('content-range'),'bytes 1-3/5');assert.equal(await range.text(),'bcd');
     assert.equal((await app.fetch(app.base+'/api/media/asset-'+name,{headers:{range:'bytes=9-'}})).status,416);
   }
-  assert.equal((await app.fetch(app.base+'/api/media/asset-expired')).status,410);
+  assert.equal((await fetch(app.base+'/api/media/asset-expired')).status,410);
+  assert.equal((await fetch(app.base+'/api/media/asset-large',{method:'POST'})).status,401);
   assert.equal((await app.fetch(app.base+'/api/media/asset-missing')).status,404);
   assert.equal((await app.fetch(app.base+'/api/media/asset-html')).status,415);
   assert.equal((await app.fetch(app.base+'/api/media/asset-large',{method:'POST'})).status,404);

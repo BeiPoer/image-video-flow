@@ -59,7 +59,9 @@ test('server protects pages, API and downloads, preserves the cookie through pro
   await start();
   const home=await fetch(base+'/',{redirect:'manual'});assert.equal(home.status,303);assert.match(home.headers.get('location'),/^\/login/);
   assert.match(await (await fetch(base+'/login')).text(),/访问密码/);
-  for(const path of ['/app.js','/styles.css','/api/bootstrap','/api/settings','/api/video-results/task-a.mp4','/api/results/result-a/download','/api/export'])assert.equal((await fetch(base+path)).status,401,path);
+  for(const path of ['/app.js','/styles.css','/api/bootstrap','/api/settings','/api/results/result-a/download','/api/export'])assert.equal((await fetch(base+path)).status,401,path);
+  assert.equal((await fetch(base+'/api/video-results/task-a.mp4')).status,404);
+  for(const method of ['POST','PUT','DELETE'])assert.equal((await fetch(base+'/api/media/asset-test',{method})).status,401);
   assert.equal((await fetch(base+'/api/kyy-assets/asset-test')).status,403,'unsigned provider assets must remain rejected');
   const postLogin=password=>fetch(base+'/api/auth/login',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({password})});
   const wrong=await postLogin('bad');assert.equal(wrong.status,401);assert.equal(wrong.headers.get('set-cookie'),null);

@@ -72,7 +72,7 @@ APP_ACCESS_PASSWORD=在此填写你的访问密码
 - 登录后签发 30 天有效的 HttpOnly、SameSite=Lax Cookie，有效期从本次登录起算；刷新、浏览器关闭和服务器重启不会重新计算或提前结束有效期（浏览器主动清除 Cookie 除外）。
 - 会话保存在数据目录的 `access-sessions.json`，登录校验密钥为 `access.key`。会话文件仅保存随机令牌的哈希与到期时间，不保存明文密码或原始 Cookie。备份、迁移或容器部署时保留整个数据目录；不要删除这两个文件。
 - 页面右上角“退出登录”会撤销当前会话；修改访问密码并重启会撤销所有已有会话。每个登录设备独立记录，最多保留 100 个设备。
-- 未登录时首页跳转登录页；项目数据、模型设置、图片及视频文件、下载与修改接口均返回未授权。请求来源校验限制跨站写操作；同一来源连续 10 次错误密码会暂时限制登录 15 分钟。
+- 未登录时首页跳转登录页；项目数据、模型设置、下载操作与修改接口均返回未授权。资源原文件的 `GET/HEAD /api/media/:id` 和 `GET/HEAD /api/video-results/:file` 允许直接访问，持有完整链接即可读取文件，仍执行 7 天过期检查；不开放资源列表或写入操作。请求来源校验限制跨站写操作；同一来源连续 10 次错误密码会暂时限制登录 15 分钟。
 - `/api/kyy-assets/*` 的 GET/HEAD 供视频服务商抓取素材，继续验证原有的单文件限时签名，不要求网站 Cookie。无效、过期签名仍然拒绝访问；其余 API 不走此例外。
 - 本地 HTTP 可以直接使用。服务器 HTTPS 部署建议设置 `APP_COOKIE_SECURE=true`，确保 Cookie 仅经 HTTPS 传输；未显式设置时会依据 TLS 或代理的 `X-Forwarded-Proto: https` 自动启用 Secure。本地 HTTP 不要设置为 true。
 
@@ -97,7 +97,7 @@ APP_ACCESS_PASSWORD=在此填写你的访问密码
 
 打开网站根地址先进入项目首页，展示项目名称、备注、图片/视频数量、最近时间和正在生成的任务数。点击项目进入工作台，顶部“项目首页”或 FLOW 标志可返回列表；首页可创建新项目，创建后直接进入工作台。
 
-首页初始化和任务轮询只返回记录及资源地址，不再通过 `/api/bootstrap` 重复传输全部 Base64 原图或任务中的图片副本。内嵌图片、音视频通过受登录保护的 `/api/media/:id` 按需读取，仍遵守 7 天保留期；原始数据保存方式不变，无需迁移，生成参考继续读取服务器原始内容。
+首页初始化和任务轮询只返回记录及资源地址，不再通过 `/api/bootstrap` 重复传输全部 Base64 原图或任务中的图片副本。内嵌图片、音视频通过公开只读的 `/api/media/:id` 按需读取，仍遵守 7 天保留期；原始数据保存方式不变，无需迁移，生成参考继续读取服务器原始内容。
 
 工作台使用 `#/project/项目ID` 地址，刷新会保留当前项目，浏览器后退/前进也能切换首页与项目；根地址或 `#/` 始终显示首页。在当前标签页内往返首页或切换项目，会分别保留尚未提交的图片和视频输入草稿；刷新整个网页不会保存这些未提交草稿。后台任务继续运行，首页会更新项目任务数。
 
@@ -136,7 +136,7 @@ APP_ACCESS_PASSWORD=在此填写你的访问密码
 
 - 三种类型复用视频配置中的 API Key、Base URL 和模型名称；不要将图片服务的 Key 当作视频服务的 Key。
 - 切换类型不会覆盖原先输入的地址、模型或密钥，请一起检查。OpenAI Video 指的是协议格式，不代表 OpenAI 官方提供 Seedance 模型。
-- OpenAI 类型通过 `/videos` 发送 JSON，保留 `seconds`、`size`。页面选择的多图/首尾帧按 New API 的 Seedance 扩展放入 `metadata.content`，每张图片包含 `image_url.url` 和 `role`（`reference_image`、`first_frame` 或 `last_frame`）；参考图与首尾帧不能混用。支持 PNG/JPEG/WebP Base64 图片和 URL，启用 COS 时复用临时素材中转。旧单图调用仍兼容 `input_reference.image_url`。该多图扩展需要服务商支持，不能视为所有 OpenAI 官方模型都支持多图。适配依据：[New API Seedance 源码](https://github.com/QuantumNous/new-api/blob/main/plugins/tasks/doubao/plugin.js)。
+- OpenAI 类型通过 `/videos` 发送 JSON，保留 `seconds`、`size`。页面选择的多图/首尾帧按 New API 的 Seedance 扩展放入 `metadata.content`，每张图片包含 `image_url.url` 和 `role`（`reference_image`、`first_frame` 或 `last_frame`）；参考图与首尾帧不能混用。素材库内的 PNG/JPEG/WebP 图片以可直接读取的公网 URL 发送，避免上游素材审核不兼容 Base64；启用 COS 时仍复用临时素材中转。未启用 COS 时优先使用设置里的“素材访问地址”，留空则从当前 HTTPS 请求自动识别工作台公网域名（反向代理需保留 Host 和 X-Forwarded-Proto）。本机 HTTP 部署需手动填写公网 HTTPS 地址，否则会在提交前提示，不发起付费任务。旧单图调用仍兼容 `input_reference.image_url`。该多图扩展需要服务商支持，不能视为所有 OpenAI 官方模型都支持多图。适配依据：[New API Seedance 源码](https://github.com/QuantumNous/new-api/blob/main/plugins/tasks/doubao/plugin.js)。
 - 创建视频时可选择时长及画幅/尺寸，避免将图片分辨率直接传入视频接口。OpenAI 官方参考图尺寸需要与目标视频尺寸匹配，应用不自动裁切。
 - kyyReactApi 通过 JSON 的 `url` 字段登记素材，再用 `assetDetail` 查询至 `ACTIVE`，最后以 `assetId://` 生成。在画布中选择素材库和已生成结果中的图片、视频、音频；右侧可切换首尾帧模式。也可填写已有 URL 或 assetId 覆盖参考图片。
 - 点击“使用图片生成视频”后，可在右侧高级选项填写 URL 或素材 ID 覆盖当前参考图；无参考图时可以仅使用提示词。
@@ -154,7 +154,7 @@ APP_ACCESS_PASSWORD=在此填写你的访问密码
 3. 生成时，后端把选中的本地素材转换为 1 小时有效的签名 URL，并提交素材接口。只有签名对应的文件可读取；过期、伪造签名均返回 403，支持 GET / HEAD / Range。
 4. 素材审核失败时不提交视频生成任务。原始文件不被压缩或覆盖，也不上传到额外图床。已有公网 HTTPS 素材可直接引用，无需本地转发地址。
 
-**公网仅开放签名素材路径，其他页面和 API 保持本机访问或登录保护。** 设置接口不回传已保存的 API Key；整个工作台仍需访问密码保护。签名本身是限时访问凭据，请勿分享任务中的素材 URL。
+**资源文件读取路径 `/api/media/:id`、`/api/video-results/:file` 公开，其他页面和 API 仍需登录。** 原有 `/api/kyy-assets/:id` 继续使用限时签名。 设置接口不回传已保存的 API Key；整个工作台仍需访问密码保护。签名本身是限时访问凭据，请勿分享任务中的素材 URL。
 
 文件大小上限为图片 30 MB、视频 50 MB、音频 15 MB；时长、帧率、宽高和内容审核仍以服务商实际校验为准。模拟测试验证了素材回读、审核等待和任务参数，不等于真实服务已联网生成成功。
 

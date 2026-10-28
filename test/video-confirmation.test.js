@@ -21,6 +21,8 @@ test('videos default to confirmed; removal/re-add persist, single downloads pres
     assert.fail('video did not complete');
   }
   const first=await generate(project.id,'第一段'),second=await generate(project.id,'第二段');await generate(other.id,'另一个项目');
+  const publicVideo=await fetch(app.base+first.dataUrl);assert.equal(publicVideo.status,200);assert.equal(await publicVideo.text(),'123456789');
+  const publicAlias=await fetch(app.base+'/api/media/'+first.id);assert.equal(publicAlias.status,200);assert.equal(await publicAlias.text(),'123456789');
   let state=await api('/api/bootstrap');assert.equal(projectVideos(state,project.id).filter(r=>r.videoConfirmed!==false).length,2);
   await api('/api/results/'+first.id+'/video-confirmation',{confirmed:false},'PATCH');
   state=await api('/api/bootstrap');assert.equal(state.results.find(r=>r.id===first.id).videoConfirmed,false);
