@@ -1,13 +1,13 @@
 import { createServer } from 'node:http';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import {loginFetch,testPassword} from './auth.js';
 
 export const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j1ioAAAAASUVORK5CYII=';
-export async function startWorkflowServer() {
+export async function startWorkflowServer(initialState) {
   const dir = await mkdtemp(join(tmpdir(), 'ai-flow-workflow-'));
   const calls = [];
   let child, rejectEdits = false;
@@ -45,6 +45,7 @@ export async function startWorkflowServer() {
     await rm(dir,{recursive:true,force:true});
   }
   try {
+    if (initialState) await writeFile(join(dir,'state.json'),JSON.stringify(initialState));
     await new Promise(resolve=>mock.listen(0,'127.0.0.1',resolve));
     const provider='http://127.0.0.1:'+mock.address().port;
     child=spawn(process.execPath,['server.js'],{cwd:new URL('../../',import.meta.url),env:{...process.env,APP_ACCESS_PASSWORD:testPassword,APP_COOKIE_SECURE:'false',AI_FLOW_PORT:'0',AI_FLOW_DATA_DIR:dir,COS_ENABLED:'false',OPENAI_API_KEY:'mock-key',OPENAI_BASE_URL:provider+'/v1',OPENAI_IMAGE_MODEL:'gpt-image-2',SEEDANCE_API_KEY:'mock-video-key',SEEDANCE_BASE_URL:provider+'/v3',VIDEO_API_TYPE:'volcengine'},stdio:['ignore','pipe','pipe']});

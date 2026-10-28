@@ -28,7 +28,7 @@ function storageError(action, err) {
     ExpiredToken: '：临时凭据已过期（ExpiredToken），请管理员更新有效凭据',
     NoSuchBucket: '：存储桶不存在（NoSuchBucket），请管理员核对桶名称和地域',
   };
-  const permissions = { '读取自动清理配置': 'GetBucketLifecycle', '写入自动清理配置': 'PutBucketLifecycle', '上传': 'PutObject', '检查': 'HeadObject' };
+  const permissions = { '读取自动清理配置': 'GetBucketLifecycle', '写入自动清理配置': 'PutBucketLifecycle', '上传': 'PutObject', '检查': 'HeadObject', '删除': 'DeleteObject' };
   const reason = reasons[code] || (message === 'SignatureDoesNotMatch' ? reasons.SignatureDoesNotMatch
     : /request has expired/i.test(message) ? '：请求签名已过期，请管理员同步系统时间后重试'
     : code === 'AccessDenied' ? `：腾讯云拒绝访问（AccessDenied），请管理员检查${permissions[action] ? ' ' + permissions[action] : ''} 权限及授权资源范围`
@@ -78,7 +78,8 @@ export async function createCosStore(dataDir, config = cosConfig(), client) {
     writes = operation.catch(() => {});
     return operation;
   }
-  async function ensure(sourceId, bytes, mime) {
+  async function ensure(sourceId, bytes, mime, expiresAt = Infinity) {
+    if (expiresAt <= Date.now()) throw new Error('资源已超过 7 天保留期');
     if (!Buffer.isBuffer(bytes) || !bytes.length || bytes.length > 50 * 1024 * 1024 || !/^(image|video|audio)\/[a-z0-9.+-]+$/.test(mime)) throw new Error('临时素材内容、格式或大小无效');
     const digest = crypto.createHash('sha256').update(bytes).update(mime).digest('hex');
     const pendingKey = sourceId + ':' + digest;
@@ -96,11 +97,14 @@ export async function createCosStore(dataDir, config = cosConfig(), client) {
         const key = prefix + crypto.randomUUID();
         try { await call('putObject', { Key: key, Body: bytes, ContentType: mime, ContentLength: bytes.length, ACL: 'private', StorageClass: 'STANDARD' }); }
         catch (err) { throw storageError('上传', err); }
-        entry = { key, digest, bucket: config.BUCKET, region: config.REGION, uploadedAt: Date.now() };
+        const previousKeys=entry?.bucket===config.BUCKET&&entry.region===config.REGION?[...(entry.previousKeys||[]),entry.key]:[];
+        entry = { key, digest, bucket: config.BUCKET, region: config.REGION, uploadedAt: Date.now(), previousKeys };
         entries[sourceId] = entry;
         try { await persist(); } catch { throw new Error('临时素材上传成功，但服务端记录保存失败，请管理员检查数据目录'); }
       }
-      try { return (await call('getObjectUrl', { Key: entry.key, Sign: true, Expires: linkSeconds })).Url; }
+      const seconds=Math.min(linkSeconds,Math.floor((expiresAt-Date.now())/1000));
+      if (!(seconds>0)) throw new Error('资源已超过 7 天保留期');
+      try { return (await call('getObjectUrl', { Key: entry.key, Sign: true, Expires: seconds })).Url; }
       catch (err) { throw storageError('链接生成', err); }
     })().finally(() => pending.delete(pendingKey));
     pending.set(pendingKey, operation);
@@ -110,5 +114,17 @@ export async function createCosStore(dataDir, config = cosConfig(), client) {
     const withoutLinks = String(message).replace(/https?:\/\/[^\s<>"']+/g, value => value.includes('q-sign') || value.includes('.myqcloud.com/') ? '[临时素材链接]' : value);
     return [config.SECRET_ID, config.SECRET_KEY, config.BUCKET].reduce((text, value) => text.split(value).join('[服务端配置]'), withoutLinks);
   }
-  return { enabled: true, ensure, redactError };
+  async function remove(sourceId) {
+    await Promise.allSettled([...pending].filter(([key])=>key.startsWith(sourceId+':')).map(([,operation])=>operation));
+    const entry=entries[sourceId];
+    if (!entry) return;
+    if (entry.bucket!==config.BUCKET || entry.region!==config.REGION) throw new Error('过期素材属于其他 COS 存储桶，请管理员清理原存储桶');
+    for (const key of [...new Set([entry.key,...(entry.previousKeys||[])])]) {
+      if (typeof key!=='string' || !key.startsWith(prefix)) throw new Error('过期素材 COS 路径无效');
+      try { await call('deleteObject',{Key:key}); }
+      catch (err) { if(Number(err.statusCode)!==404)throw storageError('删除',err); }
+    }
+    delete entries[sourceId]; await persist();
+  }
+  return { enabled: true, ensure, remove, redactError };
 }

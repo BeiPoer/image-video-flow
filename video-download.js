@@ -8,6 +8,7 @@ import {join} from 'node:path';
 import {Transform} from 'node:stream';
 import {pipeline} from 'node:stream/promises';
 import {publicImageAddress} from './image-source.js';
+import {requireMedia} from './media-retention.js';
 
 const fileLimit=256*1024*1024;
 const activeDownloads=new Map();
@@ -40,6 +41,7 @@ export async function remoteVideo(source,redirects=0) {
 }
 
 export async function videoFile(result,dataDir,openRemote=remoteVideo) {
+  requireMedia(result);
   if(/^\/api\/video-results\/task-[a-f0-9-]+\.mp4$/.test(result.dataUrl || '')){
     const path=join(dataDir,'videos',result.dataUrl.split('/').pop());
     let info;try{info=await stat(path);}catch{throw downloadError('本地视频文件不存在，请检查数据目录');}
@@ -57,9 +59,10 @@ export async function videoFile(result,dataDir,openRemote=remoteVideo) {
       const stream=await openRemote(result.dataUrl);
       const limit=new Transform({transform(chunk,encoding,done){bytes+=chunk.length;done(bytes>fileLimit?downloadError('单个视频超过 256 MB 下载上限'):null,chunk);}});
       await pipeline(stream,limit,createWriteStream(temporary));
+      requireMedia(result);
       if(!bytes)throw downloadError('下载到的视频为空');
       await rename(temporary,path);return {path,size:bytes};
-    }catch(err){throw downloadError(err.message?.includes('256 MB')?'单个视频超过 256 MB 下载上限':undefined);}
+    }catch(err){if(err.status===410)throw err;throw downloadError(err.message?.includes('256 MB')?'单个视频超过 256 MB 下载上限':undefined);}
     finally{await rm(temporary,{force:true});}
   })().finally(()=>activeDownloads.delete(path));
   activeDownloads.set(path,job);return job;

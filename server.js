@@ -15,6 +15,7 @@ import { generateVideo, videoRequest } from './video-api.js';
 import { createCosStore } from './cos-storage.js';
 import { downloadImage } from './image-source.js';
 import { createAccessControl } from './access-control.js';
+import { expireResources, mediaExpired, requireMedia, retentionMs } from './media-retention.js';
 
 const root = dirname(fileURLToPath(import.meta.url));
 const publicDir = join(root, 'public');
@@ -55,6 +56,18 @@ async function jsonBody(req, limit = 12_000_000) {
   return body ? JSON.parse(body) : {};
 }
 function send(res, status, payload) { res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }); res.end(JSON.stringify(payload)); }
+let retentionPending;
+function cleanExpiredMedia(scanFiles = false) {
+  return retentionPending ||= readState().then(state=>expireResources(state,dataDir,saveState,Date.now(),scanFiles)).then(errors=>{for(const err of errors)console.error('过期文件删除失败，将重试：',err.message);}).finally(()=>{retentionPending=undefined;});
+}
+async function cleanExpiredCloud() {
+  if (!cosStorage.enabled) return;
+  const state=await readState();
+  for (const record of [...state.assets,...state.results]) if (mediaExpired(record)) {
+    try { await cosStorage.remove(record.id); }
+    catch (err) { console.error('过期云端素材删除失败，将重试：',err.message); }
+  }
+}
 function error(res, message, status = 400) { send(res, status, { error: message }); }
 function sampleResult(kind, prompt) {
   const title = kind === 'video' ? 'VIDEO PREVIEW' : 'IMAGE PREVIEW';
@@ -104,6 +117,8 @@ async function storeVideo(response, taskId) {
 }
 async function serveVideo(req, res, name) {
   if (!/^task-[a-f0-9-]+\.mp4$/.test(name)) return error(res, '找不到视频', 404);
+  const state=await readState();
+  requireMedia(state.results.find(record=>record.taskId===name.slice(0,-4)));
   const file = join(dataDir, 'videos', name);
   if (!existsSync(file)) return error(res, '找不到视频', 404);
   const { size } = await stat(file);
@@ -125,7 +140,7 @@ function kyyRecordMime(record) {
   return mime;
 }
 async function kyyReferenceUrl(record, sourceId) {
-  if (!record) throw new Error('找不到参考素材');
+  requireMedia(record);
   const mime=kyyRecordMime(record);
   if (!kyyMimeTypes.has(mime)) throw new Error('参考素材格式不受 kyyReactApi 支持');
   if (cosStorage.enabled && (isLocalMedia(record) || record.provider === 'openai')) return cloudReferenceUrl(record, sourceId);
@@ -138,8 +153,9 @@ async function kyyReferenceUrl(record, sourceId) {
 function kyyRecordKind(record) { return record?.kind || ({ image: 'image', video: 'video', audio: 'audio' }[kyyRecordMime(record)?.split('/')[0]] || ''); }
 function findMedia(state, sourceId) { return state.assets.find(item => item.id === sourceId) || state.results.find(item => item.id === sourceId); }
 async function imageReference(record) {
-  if (!record) throw new Error('参考图片不存在，请重新选择');
+  requireMedia(record);
   const source = isLocalMedia(record) ? record : { ...record, dataUrl: await downloadImage(record.dataUrl) };
+  requireMedia(record);
   const mime = kyyRecordMime(source);
   if (!['image/png', 'image/jpeg', 'image/webp'].includes(mime)) throw new Error('参考图生图支持 PNG、JPEG、WebP，请替换其他格式或演示图片');
   return { mime, bytes: await localMediaBytes(source) };
@@ -148,6 +164,7 @@ function isLocalMedia(record) {
   return record?.dataUrl?.startsWith('data:') || /^\/api\/video-results\/task-[a-f0-9-]+\.mp4$/.test(record?.dataUrl || '');
 }
 async function localMediaBytes(record) {
+  requireMedia(record);
   const mime = kyyRecordMime(record);
   const maxBytes = (mime.startsWith('image/') ? 30 : mime.startsWith('video/') ? 50 : 15) * 1024 * 1024;
   const match = /^data:([^;,]+);base64,([A-Za-z0-9+/=\r\n]+)$/.exec(record.dataUrl || '');
@@ -170,12 +187,16 @@ async function syncCloudMedia(record, state) {
   await saveState(state);
 }
 async function cloudReferenceUrl(record, sourceId) {
+  requireMedia(record);
   if (!isLocalMedia(record) && record.provider === 'openai') {
-    record.dataUrl = await downloadImage(record.dataUrl);
+    const downloaded = await downloadImage(record.dataUrl);
+    requireMedia(record);
+    record.dataUrl = downloaded;
     await saveState(await readState());
   }
   try {
-    const url = await cosStorage.ensure(sourceId, await localMediaBytes(record), kyyRecordMime(record));
+    const url = await cosStorage.ensure(sourceId, await localMediaBytes(record), kyyRecordMime(record), Date.parse(record.createdAt)+retentionMs);
+    requireMedia(record);
     record.cloudUpload = { status: 'uploaded' };
     await saveState(await readState());
     return url;
@@ -212,7 +233,7 @@ async function runTask(task, state, config = modelSettings.current()) {
         for(const [source,target] of [['firstImageId','firstImage'],['lastImageId','lastImage']])if(selections[source])videoParams[target]=await kyyReferenceUrl(state.assets.find(item=>item.id===selections[source])||state.results.find(item=>item.id===selections[source]),selections[source]);
       }
       const inputImageUrl = task.inputImageId
-        ? (cosStorage.enabled || task.videoApiType === 'kyyReactApi' ? await kyyReferenceUrl(findMedia(state, task.inputImageId), task.inputImageId) : findMedia(state, task.inputImageId)?.dataUrl)
+        ? (cosStorage.enabled || task.videoApiType === 'kyyReactApi' ? await kyyReferenceUrl(findMedia(state, task.inputImageId), task.inputImageId) : requireMedia(findMedia(state, task.inputImageId)).dataUrl)
         : task.inputImageUrl;
       const video = await generateVideo(task.prompt, inputImageUrl, videoParams, config, async update => {
         Object.assign(task, update); await saveState(state);
@@ -231,12 +252,14 @@ async function runTask(task, state, config = modelSettings.current()) {
   } catch (err) { task.status = err.uncertain ? 'unknown' : 'failed'; task.error = [config.OPENAI_API_KEY, config.SEEDANCE_API_KEY].filter(Boolean).reduce((message, key) => message.split(key).join('[REDACTED]'), err.message); if (cosStorage.enabled) task.error = cosStorage.redactError(task.error); task.completedAt = now(); await saveState(state); }
 }
 async function api(req, res, pathname, url) {
+  await cleanExpiredMedia();
   if (pathname.startsWith('/api/video-results/') && ['GET','HEAD'].includes(req.method)) return serveVideo(req,res,pathname.slice('/api/video-results/'.length));
   if (pathname.startsWith('/api/kyy-assets/') && ['GET','HEAD'].includes(req.method)) {
     const sourceId=pathname.slice('/api/kyy-assets/'.length), mime=url.searchParams.get('type')||'', expires=url.searchParams.get('expires')||'', signature=url.searchParams.get('signature')||'';
     if(!/^(asset|result)-[A-Za-z0-9_-]+$/.test(sourceId)||!kyyMimeTypes.has(mime)||!await modelSettings.verifyAssetUrl(sourceId,mime,expires,signature))return error(res,'素材链接无效或已过期',403);
     const current=await readState(), record=current.assets.find(item=>item.id===sourceId)||current.results.find(item=>item.id===sourceId);
-    if(!record||kyyRecordMime(record)!==mime)return error(res,'找不到素材',404);
+    requireMedia(record);
+    if(kyyRecordMime(record)!==mime)return error(res,'找不到素材',404);
     if (mime === 'video/mp4' && /^\/api\/video-results\/task-[a-f0-9-]+\.mp4$/.test(record.dataUrl || '')) {
       const name = record.dataUrl.split('/').pop();
       const file = join(dataDir, 'videos', name);
@@ -280,6 +303,7 @@ async function api(req, res, pathname, url) {
     if(!result || !projectVideos(state,projectId).some(item=>item.id===result.id))return error(res,'找不到已完成的视频',404);
     const body=await jsonBody(req,4096);
     if(typeof body?.confirmed!=='boolean')return error(res,'确认状态必须为布尔值');
+    if (body.confirmed) requireMedia(result);
     result.videoConfirmed=body.confirmed;await saveState(state);
     return send(res,200,{id:result.id,videoConfirmed:result.videoConfirmed});
   }
@@ -290,10 +314,11 @@ async function api(req, res, pathname, url) {
       const projectId=state.shots.find(shot=>shot.id===result?.shotId)?.projectId;
       if(!result || !projectVideos(state,projectId).some(item=>item.id===result.id))return error(res,'找不到已完成的视频',404);
       const file=await videoFile(result,dataDir);
+      requireMedia(result);
       const encodedName=encodeURIComponent(downloadName(result.name)).replace(/['()*]/g,char=>'%'+char.charCodeAt(0).toString(16).toUpperCase());
       res.writeHead(200,{'content-type':'video/mp4','content-disposition':`attachment; filename="video.mp4"; filename*=UTF-8''${encodedName}`,'cache-control':'private, no-store','content-length':file.size});
       await pipeline(createReadStream(file.path),res);
-    }catch(err){if(res.headersSent)res.destroy();else error(res,err.message || '视频下载失败',502);}
+    }catch(err){if(res.headersSent)res.destroy();else error(res,err.message || '视频下载失败',err.status || 502);}
     return;
   }
   if (req.method === 'GET' && pathname === '/api/bootstrap') return send(res, 200, { ...state, providers: { openai: configured('openai') ? 'configured' : 'demo', seedance: configured('seedance') ? 'configured' : 'demo' }, models: { openai: modelSettings.current().OPENAI_IMAGE_MODEL, seedance: modelSettings.current().SEEDANCE_MODEL }, videoApiType: modelSettings.current().VIDEO_API_TYPE, publicAssetBaseUrl: modelSettings.current().PUBLIC_ASSET_BASE_URL, cloudMediaEnabled: cosStorage.enabled });
@@ -310,6 +335,7 @@ async function api(req, res, pathname, url) {
     for (const node of generators) {
       if (!node || typeof node.id !== 'string' || !/^gen-[a-f0-9-]{36}$/.test(node.id) || generatorIds.has(node.id) || typeof node.prompt !== 'string' || node.prompt.length > 32000 || !imageSizes.includes(node.size)) return error(res, '生图节点参数无效');
       if (!Array.isArray(node.referenceImageIds) || node.referenceImageIds.length > 8 || node.referenceImageIds.some(id => { const item = findMedia(state,id); return !item || kyyRecordKind(item) !== 'image'; })) return error(res, '生图节点参考图无效');
+      node.referenceImageIds=node.referenceImageIds.filter(id=>!mediaExpired(findMedia(state,id)));
       generatorIds.add(node.id);
     }
     const hiddenNodeIds = canvas.hiddenNodeIds ?? [];
@@ -331,8 +357,11 @@ async function api(req, res, pathname, url) {
     if (Object.hasOwn(body, 'selectedImageId') && body.selectedImageId !== null) {
       const image = findMedia(state, body.selectedImageId);
       if (!image || kyyRecordKind(image) !== 'image') return error(res, '请选择有效图片', 400);
+      requireMedia(image);
     }
     if (body.assetIds !== undefined && (!Array.isArray(body.assetIds) || body.assetIds.some(id => !findMedia(state, id)))) return error(res, '参考素材无效', 400);
+    for (const sourceId of body.assetIds || []) requireMedia(findMedia(state,sourceId));
+    if (body.selectedVideoId) requireMedia(findMedia(state,body.selectedVideoId));
     Object.assign(shot, { name: body.name ?? shot.name, imagePrompt: body.imagePrompt ?? shot.imagePrompt, videoPrompt: body.videoPrompt ?? shot.videoPrompt, assetIds: body.assetIds ?? shot.assetIds, selectedImageId: Object.hasOwn(body, 'selectedImageId') ? body.selectedImageId : shot.selectedImageId, selectedVideoId: body.selectedVideoId ?? shot.selectedVideoId });
     await saveState(state); return send(res, 200, shot);
   }
@@ -360,6 +389,7 @@ async function api(req, res, pathname, url) {
     if (body.inputImageId) {
       const record = state.results.find(item => item.id === body.inputImageId) || state.assets.find(item => item.id === body.inputImageId);
       if (body.kind !== 'video' || !record || kyyRecordKind(record) !== 'image') return error(res, '找不到参考图片', 400);
+      requireMedia(record);
     }
     const config=modelSettings.current(), params=body.params||{};
     const referenceImageIds = body.referenceImageIds ?? [];
@@ -368,6 +398,7 @@ async function api(req, res, pathname, url) {
     for (const sourceId of referenceImageIds) {
       const image = findMedia(state, sourceId);
       if (!image || kyyRecordKind(image) !== 'image') return error(res, '参考图片不存在或类型不匹配', 400);
+      requireMedia(image);
       if (configured('openai', config) && !['image/png', 'image/jpeg', 'image/webp'].includes(kyyRecordMime(image))) return error(res, '参考图生图支持 PNG、JPEG、WebP，请替换其他格式或演示图片', 400);
     }
     if (body.kind === 'image' && (body.prompt.length > 32000 || !imageSizes.includes(params.size || '1024x1536'))) return error(res, '图片提示词过长或尺寸不受支持', 400);
@@ -375,6 +406,7 @@ async function api(req, res, pathname, url) {
     if(body.kind==='video'&&config.VIDEO_API_TYPE==='kyyReactApi'&&body.kyyMedia){
       const media=body.kyyMedia, groups=[['referenceImageIds','image',9],['referenceVideoIds','video',3],['referenceAudioIds','audio',3]];
       if(!media||typeof media!=='object'||Array.isArray(media))return error(res,'参考素材格式无效',400);
+      for (const sourceId of [...groups.flatMap(([field])=>Array.isArray(media[field])?media[field]:[]),media.firstImageId,media.lastImageId].filter(Boolean)) requireMedia(findMedia(state,sourceId));
       const hasSelected=groups.some(([field])=>(media[field]||[]).length)||media.firstImageId||media.lastImageId;
       if(hasSelected&&!cosStorage.enabled&&!config.PUBLIC_ASSET_BASE_URL){const ids=[...(media.referenceImageIds||[]),...(media.referenceVideoIds||[]),...(media.referenceAudioIds||[]),media.firstImageId,media.lastImageId].filter(Boolean);const needsRelay=ids.some(sourceId=>{const record=state.assets.find(item=>item.id===sourceId)||state.results.find(item=>item.id===sourceId);return record?.dataUrl?.startsWith('data:') || record?.dataUrl?.startsWith('/api/video-results/');});if(needsRelay)return error(res,'请在模型设置填写公网 HTTPS 素材访问地址；本机素材需通过此地址供 kyyReactApi 读取。',400);} 
       for(const[field,kind,max]of groups){const ids=media[field]||[];if(!Array.isArray(ids)||ids.length>max)return error(res,field+' 最多选择 '+max+' 个素材',400);for(const sourceId of ids){const record=state.assets.find(item=>item.id===sourceId)||state.results.find(item=>item.id===sourceId);if(!record||kyyRecordKind(record)!==kind||!kyyMimeTypes.has(kyyRecordMime(record)))return error(res,'参考素材不存在、类型不匹配或格式不受支持',400);}}
@@ -393,7 +425,7 @@ async function api(req, res, pathname, url) {
     const task={id:id('task'),...(body.imageNodeId ? {imageNodeId:body.imageNodeId} : {}),shotId:body.shotId,kind:body.kind,prompt:body.prompt.trim(),inputImageUrl:body.inputImageUrl||null,inputImageId:body.inputImageId||null,referenceImageIds:[...new Set(referenceImageIds)],previousImageId:state.shots.find(shot=>shot.id===body.shotId).selectedImageId,params:taskParams,status:'queued',createdAt:now(),model:body.kind==='image'?config.OPENAI_IMAGE_MODEL:config.SEEDANCE_MODEL,...(body.kind==='video'?{videoApiType:config.VIDEO_API_TYPE}:{})};
     state.tasks.unshift(task);await saveState(state);void runTask(task,state,config);return send(res,202,task);
   }
-  if (req.method === 'POST' && pathname.startsWith('/api/results/')) { const result = state.results.find((r) => r.id === pathname.split('/').pop()); if (!result) return error(res, '找不到结果', 404); const body = await jsonBody(req); const shot = state.shots.find((s) => s.id === result.shotId); if (!shot) return error(res, '找不到镜头', 404); if (result.kind === 'image') shot.selectedImageId = result.id; if (result.kind === 'video') shot.selectedVideoId = result.id; await saveState(state); return send(res, 200, shot); }
+  if (req.method === 'POST' && pathname.startsWith('/api/results/')) { const result = state.results.find((r) => r.id === pathname.split('/').pop()); if (!result) return error(res, '找不到结果', 404); requireMedia(result); const body = await jsonBody(req); const shot = state.shots.find((s) => s.id === result.shotId); if (!shot) return error(res, '找不到镜头', 404); if (result.kind === 'image') shot.selectedImageId = result.id; if (result.kind === 'video') shot.selectedVideoId = result.id; await saveState(state); return send(res, 200, shot); }
   if (req.method === 'POST' && pathname === '/api/export') { const body = await jsonBody(req); const shotIds = body.shotIds || []; const shots = state.shots.filter((s) => shotIds.includes(s.id)); return send(res, 200, { ok: true, filename: `ai-media-flow-${Date.now()}.json`, manifest: shots.map((shot) => ({ name: shot.name, image: findMedia(state, shot.selectedImageId)?.name || null, video: state.results.find((r) => r.id === shot.selectedVideoId)?.name || null })) }); }
   return error(res, '接口不存在', 404);
 }
@@ -419,9 +451,18 @@ async function serve(req, res) {
     if(!file.startsWith(publicDir+ (process.platform==='win32'?'\\':'/'))||!existsSync(file))return error(res,'页面不存在',404);
     const info=await stat(file);if(!info.isFile())return error(res,'页面不存在',404);
     res.writeHead(200,{'content-type':mimeTypes[extname(file)]||'application/octet-stream','cache-control':'no-store','x-frame-options':'DENY'});res.end(req.method==='HEAD'?undefined:await readFile(file));
-  }catch(err){if(res.headersSent)return res.destroy();error(res,err instanceof URIError?'地址格式无效':err.message||'服务器错误',err instanceof URIError?400:500);}
+  }catch(err){if(res.headersSent)return res.destroy();error(res,err instanceof URIError?'地址格式无效':err.message||'服务器错误',err instanceof URIError?400:err.status||500);}
 }
 await ensureState();
+await cleanExpiredMedia(true);
+let cloudCleanupPending;
+function maintainMedia() {
+  return cleanExpiredMedia(true).then(()=>{
+    cloudCleanupPending ||= cleanExpiredCloud().catch(err=>console.error('云端资源清理失败，将重试：',err.message)).finally(()=>{cloudCleanupPending=undefined;});
+  }).catch(err=>console.error('过期资源清理失败，将重试：',err.message));
+}
+void maintainMedia();
+setInterval(maintainMedia,60000).unref();
 createServer(serve).listen(port, '0.0.0.0', function () {
   const url = `http://localhost:${this.address().port}`;
   console.log(`AI Media Flow running on ${url}`);

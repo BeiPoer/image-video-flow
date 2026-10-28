@@ -21,13 +21,14 @@ function mockCos() {
   const objects = new Map(), calls = [];
   const otherRule = { ID: 'unrelated', Status: 'Enabled', Filter: { Prefix: 'keep/' }, Expiration: { Days: 90 } };
   const mock = { objects, calls, rules: [otherRule], fail: '' };
-  for (const method of ['getBucketLifecycle', 'putBucketLifecycle', 'putObject', 'headObject', 'getObjectUrl']) {
+  for (const method of ['getBucketLifecycle', 'putBucketLifecycle', 'putObject', 'headObject', 'getObjectUrl', 'deleteObject']) {
     mock[method] = (params, callback) => {
       calls.push({ method, params });
       if (mock.fail === method) return callback(mock.failure || { statusCode: 403, message: 'admin-secret and signed URL must never reach a browser' });
       if (method === 'getBucketLifecycle') return callback(null, { Rules: structuredClone(mock.rules) });
       if (method === 'putBucketLifecycle') mock.rules = structuredClone(params.Rules);
       if (method === 'putObject') objects.set(params.Key, params.Body);
+      if (method === 'deleteObject') objects.delete(params.Key);
       if (method === 'headObject' && !objects.has(params.Key)) return callback({ statusCode: 404 });
       callback(null, method === 'getObjectUrl' ? { Url: 'https://cos.example/' + params.Key + '?signed=true' } : {});
     };
@@ -81,6 +82,24 @@ test('COS retains other lifecycle rules, uploads privately, reuses/reuploads aft
   assert.notEqual(await store.ensure('asset-one', bytes, 'image/png'), replaced);
   assert.equal(client.objects.size, 2, 'refresh must not delete an object a running task still uses');
   assert.doesNotMatch(await readFile(registryPath, 'utf8'), /admin-secret|admin-id|signed=true/);
+});
+
+test('COS expiry caps signed URLs, deletes refreshed copies and retries failed deletions after restart',async t=>{
+  const dir=await directory(t),client=mockCos();let store=await createCosStore(dir,config,client);
+  await store.ensure('asset-expiring',Buffer.from('first'),'image/png',Date.now()+60000);
+  const seconds=client.calls.find(call=>call.method==='getObjectUrl').params.Expires;
+  assert.ok(seconds>0&&seconds<=60);
+  await store.ensure('asset-expiring',Buffer.from('second'),'image/png');
+  assert.equal(client.objects.size,2);
+  client.fail='deleteObject';client.failure={code:'AccessDenied'};
+  await assert.rejects(store.remove('asset-expiring'),/DeleteObject/);
+  assert.ok(JSON.parse(await readFile(join(dir,'cos-objects.json'),'utf8'))['asset-expiring']);
+  store=await createCosStore(dir,config,client);client.fail='';
+  await store.remove('asset-expiring');assert.equal(client.objects.size,0);
+  assert.deepEqual(JSON.parse(await readFile(join(dir,'cos-objects.json'),'utf8')),{});
+  const count=client.calls.length;await store.remove('asset-expiring');assert.equal(client.calls.length,count);
+  await assert.rejects(store.ensure('expired',Buffer.from('image'),'image/png',Date.now()-1),/超过 7 天/);
+  assert.equal(client.calls.length,count,'expired resources must not upload again');
 });
 
 test('COS policy/upload failures remain retryable and never leak SDK errors', async t => {

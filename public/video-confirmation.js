@@ -4,6 +4,6 @@ export function projectVideos(state, projectId) {
   return state.results.filter(result=>{
     const task=tasks.get(result.taskId);
     return result.kind==='video' && task?.status==='completed' && shots.has(result.shotId || task.shotId)
-      && result.provider!=='local-demo' && typeof result.dataUrl==='string' && !result.dataUrl.startsWith('data:');
+      && result.provider!=='local-demo' && (result.deletedAt || typeof result.dataUrl==='string' && !result.dataUrl.startsWith('data:'));
   });
 }
