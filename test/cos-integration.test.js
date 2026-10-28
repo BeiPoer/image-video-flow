@@ -111,7 +111,8 @@ test('real COS SDK and application upload → signed download → kyy asset → 
   await completed(await api('/api/tasks', { shotId: shot.id, kind: 'image', prompt: 'an apple' }));
   const generated = (await api('/api/bootstrap')).results.find(result => result.kind === 'image');
   assert.equal(generated.cloudUpload.status, 'uploaded');
-  assert.equal(generated.dataUrl, imageData);
+  assert.match(generated.dataUrl, /^\/api\/media\/result-/);
+  assert.deepEqual(Buffer.from(await (await authenticatedFetch(base+generated.dataUrl)).arrayBuffer()),Buffer.from(imageData.split(',')[1],'base64'));
   rejectUploads = true;
   const failed = await api('/api/assets', { name: 'retry.png', kind: 'image', mime: 'image/png', dataUrl: imageData });
   assert.equal(failed.cloudUpload.status, 'failed');

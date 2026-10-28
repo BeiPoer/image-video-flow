@@ -252,8 +252,45 @@ async function runTask(task, state, config = modelSettings.current()) {
     task.status = 'completed'; task.provider = provider; task.resultIds = [result.id]; task.completedAt = now(); await saveState(state);
   } catch (err) { task.status = err.uncertain ? 'unknown' : 'failed'; task.error = [config.OPENAI_API_KEY, config.SEEDANCE_API_KEY].filter(Boolean).reduce((message, key) => message.split(key).join('[REDACTED]'), err.message); if (cosStorage.enabled) task.error = cosStorage.redactError(task.error); task.completedAt = now(); await saveState(state); }
 }
+function publicMedia(record) {
+  if (!record.dataUrl?.startsWith('data:')) return record;
+  const mime=record.dataUrl.slice(5,record.dataUrl.indexOf(',')).split(';')[0];
+  return {...record,mime,dataUrl:'/api/media/'+encodeURIComponent(record.id)};
+}
+function publicTask(task) {
+  const {inputImageUrl,...summary}=task;
+  if (task.params) {
+    const {referenceImages,referenceVideos,referenceAudios,firstImage,lastImage,...params}=task.params;
+    summary.params=params;
+  }
+  return summary;
+}
+function serveInlineMedia(req,res,record) {
+  requireMedia(record);
+  const source=record.dataUrl || '',comma=source.indexOf(','),header=source.slice(0,comma);
+  const mime=header.slice(5).split(';')[0];
+  if (!source.startsWith('data:') || comma<0 || (!kyyMimeTypes.has(mime)&&mime!=='image/svg+xml')) return error(res,'素材格式不匹配',415);
+  const encoded=source.slice(comma+1),base64=header.endsWith(';base64');
+  if (base64 && !/^[A-Za-z0-9+/=\r\n]+$/.test(encoded)) return error(res,'素材格式不匹配',415);
+  if (!base64 && mime!=='image/svg+xml') return error(res,'素材格式不匹配',415);
+  const bytes=base64?Buffer.from(encoded.replace(/\s/g,''),'base64'):Buffer.from(decodeURIComponent(encoded));
+  const maxBytes=(mime.startsWith('image/')?30:mime.startsWith('video/')?50:15)*1024*1024;
+  if(!bytes.length || bytes.length>maxBytes)return error(res,'素材为空或超过允许大小',413);
+  let start = 0, end = bytes.length - 1;
+  if (req.headers.range) {
+    const range = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range);
+    if (!range || (!range[1] && !range[2])) { res.writeHead(416, { 'content-range': 'bytes */' + bytes.length }); return res.end(); }
+    start = range[1] ? Number(range[1]) : Math.max(0, bytes.length - Number(range[2]));
+    end = range[1] && range[2] ? Math.min(bytes.length - 1, Number(range[2])) : bytes.length - 1;
+    if (start > end || start >= bytes.length) { res.writeHead(416, { 'content-range': 'bytes */' + bytes.length }); return res.end(); }
+  }
+  res.writeHead(req.headers.range ? 206 : 200, { 'content-type': mime, 'accept-ranges': 'bytes', 'content-length': end - start + 1, 'cache-control': 'private, no-store', 'x-content-type-options': 'nosniff', 'content-security-policy': "default-src 'none'; sandbox", ...(req.headers.range ? { 'content-range': 'bytes ' + start + '-' + end + '/' + bytes.length } : {}) });
+  return res.end(req.method === 'HEAD' ? undefined : bytes.subarray(start, end + 1));
+}
 async function api(req, res, pathname, url) {
   await cleanExpiredMedia();
+  const mediaRoute=/^\/api\/media\/((?:asset|result)-[A-Za-z0-9_-]+)$/.exec(pathname);
+  if(mediaRoute && ['GET','HEAD'].includes(req.method))return serveInlineMedia(req,res,findMedia(await readState(),mediaRoute[1]));
   if (pathname.startsWith('/api/video-results/') && ['GET','HEAD'].includes(req.method)) return serveVideo(req,res,pathname.slice('/api/video-results/'.length));
   if (pathname.startsWith('/api/kyy-assets/') && ['GET','HEAD'].includes(req.method)) {
     const sourceId=pathname.slice('/api/kyy-assets/'.length), mime=url.searchParams.get('type')||'', expires=url.searchParams.get('expires')||'', signature=url.searchParams.get('signature')||'';
@@ -268,20 +305,7 @@ async function api(req, res, pathname, url) {
       if ((await stat(file)).size > 50 * 1024 * 1024) return error(res, '视频素材超过 50 MB', 413);
       return serveVideo(req, res, name);
     }
-    const match=/^data:([^;,]+);base64,([A-Za-z0-9+/=\r\n]+)$/.exec(record.dataUrl||'');
-    if(!match||match[1]!==mime)return error(res,'素材格式不匹配',415);
-    const bytes=Buffer.from(match[2].replace(/\s/g,''),'base64'), maxBytes=(mime.startsWith('image/')?30:mime.startsWith('video/')?50:15)*1024*1024;
-    if(bytes.length>maxBytes)return error(res,'素材超过允许大小',413);
-    let start = 0, end = bytes.length - 1;
-    if (req.headers.range) {
-      const range = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range);
-      if (!range || (!range[1] && !range[2])) { res.writeHead(416, { 'content-range': 'bytes */' + bytes.length }); return res.end(); }
-      start = range[1] ? Number(range[1]) : Math.max(0, bytes.length - Number(range[2]));
-      end = range[1] && range[2] ? Math.min(bytes.length - 1, Number(range[2])) : bytes.length - 1;
-      if (start > end || start >= bytes.length) { res.writeHead(416, { 'content-range': 'bytes */' + bytes.length }); return res.end(); }
-    }
-    res.writeHead(req.headers.range ? 206 : 200, { 'content-type': mime, 'accept-ranges': 'bytes', 'content-length': end - start + 1, 'cache-control': 'private, no-store', 'x-content-type-options': 'nosniff', ...(req.headers.range ? { 'content-range': 'bytes ' + start + '-' + end + '/' + bytes.length } : {}) });
-    return res.end(req.method === 'HEAD' ? undefined : bytes.subarray(start, end + 1));
+    return serveInlineMedia(req,res,record);
   }
   if (pathname === '/api/settings') {
     if (req.method === 'GET') return send(res, 200, { ...modelSettings.publicSettings(), settingsToken });
@@ -322,7 +346,7 @@ async function api(req, res, pathname, url) {
     }catch(err){if(res.headersSent)res.destroy();else error(res,err.message || '视频下载失败',err.status || 502);}
     return;
   }
-  if (req.method === 'GET' && pathname === '/api/bootstrap') return send(res, 200, { ...state, providers: { openai: configured('openai') ? 'configured' : 'demo', seedance: configured('seedance') ? 'configured' : 'demo' }, models: { openai: modelSettings.current().OPENAI_IMAGE_MODEL, seedance: modelSettings.current().SEEDANCE_MODEL }, videoApiType: modelSettings.current().VIDEO_API_TYPE, publicAssetBaseUrl: modelSettings.current().PUBLIC_ASSET_BASE_URL, cloudMediaEnabled: cosStorage.enabled });
+  if (req.method === 'GET' && pathname === '/api/bootstrap') return send(res, 200, { ...state, assets:state.assets.map(publicMedia), results:state.results.map(publicMedia), tasks:state.tasks.map(publicTask), providers: { openai: configured('openai') ? 'configured' : 'demo', seedance: configured('seedance') ? 'configured' : 'demo' }, models: { openai: modelSettings.current().OPENAI_IMAGE_MODEL, seedance: modelSettings.current().SEEDANCE_MODEL }, videoApiType: modelSettings.current().VIDEO_API_TYPE, publicAssetBaseUrl: modelSettings.current().PUBLIC_ASSET_BASE_URL, cloudMediaEnabled: cosStorage.enabled });
   if (req.method === 'PATCH' && pathname.startsWith('/api/projects/')) {
     const project = state.projects.find(item => item.id === pathname.split('/').pop());
     if (!project) return error(res, '找不到画布', 404);

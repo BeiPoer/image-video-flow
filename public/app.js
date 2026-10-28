@@ -7,7 +7,7 @@ const $ = selector => document.querySelector(selector);
 const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[char]));
 const media = id => state.assets.find(item => item.id === id) || state.results.find(item => item.id === id);
 const mime = item => item?.dataUrl?.match(/^data:([^;,]+)/)?.[1] || item?.mime || ({ image:'image/png', video:'video/mp4', audio:'audio/mpeg' }[item?.kind] || '');
-const sourceUrl = value => /^(?:https?:\/\/|data:(?:image|video|audio)\/|\/api\/video-results\/)/i.test(value || '') ? value : '';
+const sourceUrl = value => /^(?:https?:\/\/|data:(?:image|video|audio)\/|\/api\/(?:video-results|media)\/)/i.test(value || '') ? value : '';
 const state = { projects:[], shots:[], assets:[], results:[], tasks:[], models:{}, providers:{}, videoApiType:'openai' };
 let projectId = null;
 let routeReady = false, navigationVersion = 0;

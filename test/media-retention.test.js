@@ -99,5 +99,6 @@ test('resources reaching seven days while the server runs expire on the next req
   const before=await (await app.fetch(app.base+'/api/bootstrap')).json();assert.ok(before.assets[0].dataUrl);
   await delay(2100);
   const after=await (await app.fetch(app.base+'/api/bootstrap')).json();assert.ok(after.assets[0].deletedAt);assert.equal(after.assets[0].dataUrl,undefined);
+  assert.equal((await app.fetch(app.base+before.assets[0].dataUrl)).status,410);
   assert.equal(JSON.parse(await readFile(join(app.dir,'state.json'),'utf8')).assets[0].dataUrl,undefined);
 });

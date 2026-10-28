@@ -9,7 +9,7 @@ import {imageRatios} from '../public/image-sizes.js';
 
 test('home lists projects without auto-entering, project routes restore on reload and returning home preserves drafts',async()=>{
   const script=(await readFile(new URL('../public/app.js',import.meta.url),'utf8')).replace(/^import .+;\r?\n/gm,'');
-  const data={projects:[{id:'p1',name:'香氛项目',description:'广告短片',createdAt:'2026-10-25T01:00:00Z'},{id:'p2',name:'<测试项目>',createdAt:'2026-10-25T02:00:00Z'}],shots:[{id:'s1',projectId:'p1'}],assets:[{id:'a1',projectId:'p1',kind:'image',name:'图片',dataUrl:'data:image/png;base64,aA=='}],results:[],tasks:[{id:'t1',kind:'image',shotId:'s1',status:'running',createdAt:'2026-10-25T03:00:00Z'}],providers:{},models:{},videoApiType:'kyyReactApi'};
+  const data={projects:[{id:'p1',name:'香氛项目',description:'广告短片',createdAt:'2026-10-25T01:00:00Z'},{id:'p2',name:'<测试项目>',createdAt:'2026-10-25T02:00:00Z'}],shots:[{id:'s1',projectId:'p1'}],assets:[{id:'a1',projectId:'p1',kind:'image',name:'图片',mime:'image/png',dataUrl:'/api/media/asset-a1'}],results:[],tasks:[{id:'t1',kind:'image',shotId:'s1',status:'running',createdAt:'2026-10-25T03:00:00Z'}],providers:{},models:{},videoApiType:'kyyReactApi'};
   function browser(hash=''){
     const nodes=new Map(),calls=[],events={},location={hash};
     const node=id=>{if(!nodes.has(id))nodes.set(id,{id,innerHTML:'',value:'',textContent:'',hidden:false,handlers:{},addEventListener(type,fn){this.handlers[type]=fn;},querySelector(){return node('submit');},reset(){this.wasReset=true;},closest(){return node('projectDialog');},showModal(){this.open=true;},close(){this.open=false;}});return nodes.get(id);};
@@ -26,6 +26,7 @@ test('home lists projects without auto-entering, project routes restore on reloa
   assert.equal(home.node('homePage').hidden,false);assert.equal(home.node('workspacePage').hidden,true);
   assert.equal(home.node('historyButton').hidden,true);assert.equal(vm.runInContext('projectId',home.ctx),null);
   assert.match(home.node('homeProjectGrid').innerHTML,/香氛项目/);assert.match(home.node('homeProjectGrid').innerHTML,/&lt;测试项目&gt;/);assert.match(home.node('homeProjectGrid').innerHTML,/1 个任务生成中/);
+  assert.match(home.node('homeProjectGrid').innerHTML,/src="\/api\/media\/asset-a1"/);
   assert.ok(home.calls.every(c=>!c.method||c.method==='GET'),'opening home must not create projects');
   await vm.runInContext("setProject('p1')",home.ctx);
   assert.equal(home.location.hash,'#/project/p1');assert.equal(home.node('workspacePage').hidden,false);
