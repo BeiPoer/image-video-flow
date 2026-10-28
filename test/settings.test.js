@@ -21,7 +21,10 @@ test('settings encrypt, persist, preserve blank keys and explicitly override env
     const env = { OPENAI_API_KEY: 'env-test-key' };
     let store = await createSettingsStore(dir, env);
     assert.equal(store.publicSettings().OPENAI_API_KEY, 'env-test-key');
-    assert.equal(store.publicSettings().VIDEO_API_TYPE, 'volcengine');
+    assert.equal(store.publicSettings().VIDEO_API_TYPE, 'openai');
+    assert.equal(store.current().OPENAI_BASE_URL, 'https://new.every-ai.cc/v1');
+    assert.equal(store.current().SEEDANCE_BASE_URL, 'https://new.every-ai.cc/v1');
+    assert.equal(store.current().SEEDANCE_MODEL, 'doubao-seedance-2-0-mini-260615');
     await store.update({ OPENAI_API_KEY: 'saved-test-key', OPENAI_BASE_URL: 'https://example.com/v1///', SEEDANCE_API_KEY: 'video-test-key' });
     assert.equal(store.current().OPENAI_BASE_URL, 'https://example.com/v1');
     await assert.rejects(store.update({ PUBLIC_ASSET_BASE_URL: 'http://media.example.test' }), { status: 400 });
@@ -97,7 +100,7 @@ test('page settings feed both providers live, protect keys and retain in-flight 
   async function launch() {
     child = spawn(process.execPath, ['server.js'], {
       cwd: new URL('..', import.meta.url),
-      env: { ...process.env, APP_ACCESS_PASSWORD:testPassword, APP_COOKIE_SECURE:'false', AI_FLOW_PORT: '0', AI_FLOW_DATA_DIR: dir, OPENAI_API_KEY: '', SEEDANCE_API_KEY: '', OPENAI_BASE_URL: 'https://api.openai.com/v1', OPENAI_IMAGE_MODEL: 'gpt-image-2', SEEDANCE_BASE_URL: 'https://ark.cn-beijing.volces.com/api/v3', SEEDANCE_MODEL: 'seedance-env' },
+      env: { ...process.env, APP_ACCESS_PASSWORD:testPassword, APP_COOKIE_SECURE:'false', AI_FLOW_PORT: '0', AI_FLOW_DATA_DIR: dir, OPENAI_API_KEY: '', SEEDANCE_API_KEY: '', OPENAI_BASE_URL: 'https://api.openai.com/v1', OPENAI_IMAGE_MODEL: 'gpt-image-2', SEEDANCE_BASE_URL: 'https://ark.cn-beijing.volces.com/api/v3', SEEDANCE_MODEL: 'seedance-env', VIDEO_API_TYPE: 'volcengine' },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     const endpoint = await new Promise((resolve, reject) => {

@@ -21,7 +21,7 @@ function mediaUrl(value) {
 }
 
 export function videoRequest(prompt, image, params = {}, config) {
-  const type = config.VIDEO_API_TYPE || 'volcengine';
+  const type = config.VIDEO_API_TYPE || 'openai';
   if (!videoApiTypes.includes(type)) invalid('不支持的视频接口类型');
   if (typeof prompt !== 'string' || !prompt.trim()) invalid('请填写视频提示词');
   const duration = Number(params.duration ?? (type === 'openai' ? 8 : 6));

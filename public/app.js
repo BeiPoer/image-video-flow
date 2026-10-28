@@ -8,7 +8,7 @@ const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&':'&am
 const media = id => state.assets.find(item => item.id === id) || state.results.find(item => item.id === id);
 const mime = item => item?.dataUrl?.match(/^data:([^;,]+)/)?.[1] || item?.mime || ({ image:'image/png', video:'video/mp4', audio:'audio/mpeg' }[item?.kind] || '');
 const sourceUrl = value => /^(?:https?:\/\/|data:(?:image|video|audio)\/|\/api\/video-results\/)/i.test(value || '') ? value : '';
-const state = { projects:[], shots:[], assets:[], results:[], tasks:[], models:{}, providers:{}, videoApiType:'volcengine' };
+const state = { projects:[], shots:[], assets:[], results:[], tasks:[], models:{}, providers:{}, videoApiType:'openai' };
 let projectId = null;
 let routeReady = false, navigationVersion = 0;
 const videoDrafts = new Map();
@@ -321,7 +321,7 @@ $('#videoOptions').addEventListener('change',event=>{
   if(field==='videoFrameMode')renderVideo();
 });
 function updateVideoMode() {
-  const type = state.videoApiType || 'volcengine';
+  const type = state.videoApiType || 'openai';
   const kyy = type === 'kyyReactApi';
   $('#videoRatioWrap').hidden = type === 'openai';
   $('#videoSizeWrap').hidden = type !== 'openai';
@@ -434,7 +434,7 @@ async function generateVideo() {
   const targetProject=projectId;
   const prompt = $('#videoPrompt').value.trim(); if (!prompt) return showToast('请填写视频提示词');
   const records = selectedImageIds.filter(id => confirmedIds.includes(id)).map(media).filter(Boolean); if (!records.length) return showToast('请先从素材确认区选择视频素材');
-  const type = state.videoApiType || 'volcengine'; const external = $('#videoExternalImage').value.trim();
+  const type = state.videoApiType || 'openai'; const external = $('#videoExternalImage').value.trim();
   if (type === 'kyyReactApi' && $('#videoFrameMode').value === 'reference' && records.length > 9) return showToast('kyyReactApi 最多选择 9 张参考图片');
   const params = { duration:Number($('#videoDuration').value), ...(type === 'openai' ? { videoSize:$('#videoSize').value } : { ratio:$('#videoRatio').value }), ...(type === 'kyyReactApi' ? { resolution:$('#videoResolution').value } : {}) };
   let body = { kind:'video', prompt, params, inputImageUrl:external || null };

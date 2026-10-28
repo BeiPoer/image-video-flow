@@ -114,12 +114,12 @@ APP_ACCESS_PASSWORD=在此填写你的访问密码
 
 ## 视频接口类型
 
-旧配置没有接口类型时，自动使用火山引擎官方类型，保留原来的地址、模型和密钥。
+未配置时，图片和视频的 Base URL 均默认为 `https://new.every-ai.cc/v1`；视频接口默认为 OpenAI Video（兼容接口），视频模型默认为 `doubao-seedance-2-0-mini-260615`。图片模型仍为 `gpt-image-2`。已保存的配置和环境变量优先于默认值；已有火山引擎配置需明确选择火山引擎官方类型。
 
 | 接口类型 | Base URL 示例 | 模型示例 | 提交与查询 |
 | --- | --- | --- | --- |
 | 火山引擎官方（Ark） | `https://ark.cn-beijing.volces.com/api/v3` | `doubao-seedance-2-0-260128` | `POST /contents/generations/tasks`、`GET /contents/generations/tasks/{id}` |
-| OpenAI Video（兼容接口） | `https://api.openai.com/v1` 或兼容服务商的 API 根地址 | 官方为 `sora-2`，兼容服务按实际模型填写 | `POST /videos`、`GET /videos/{id}`，必要时 `GET /videos/{id}/content` |
+| OpenAI Video（兼容接口） | `https://new.every-ai.cc/v1` | `doubao-seedance-2-0-mini-260615` | `POST /videos`、`GET /videos/{id}`，必要时 `GET /videos/{id}/content` |
 | kyyReactApi | `https://zcbservice.aizfw.cn/kyyReactApiServer` | `sd_2.0_special` | `POST /v2/model-center/tasks`、`GET /v2/model-center/tasks/{id}` |
 
 - 三种类型复用视频配置中的 API Key、Base URL 和模型名称；不要将图片服务的 Key 当作视频服务的 Key。

@@ -10,7 +10,7 @@ async function openSettings() {
     const form = $('#settingsForm'); form.reset();
     settingsToken = values.settingsToken;
     for (const name of ['OPENAI_BASE_URL', 'OPENAI_IMAGE_MODEL', 'SEEDANCE_BASE_URL', 'SEEDANCE_MODEL', 'VIDEO_API_TYPE', 'PUBLIC_ASSET_BASE_URL']) form.elements[name].value = values[name];
-    lastVideoType = values.VIDEO_API_TYPE || 'volcengine';
+    lastVideoType = values.VIDEO_API_TYPE || 'openai';
     $('#publicAssetBaseField').hidden = lastVideoType !== 'kyyReactApi' || state.cloudMediaEnabled;
     $('#publicAssetHelp').hidden = lastVideoType !== 'kyyReactApi' || state.cloudMediaEnabled;
     for (const [name, label] of [['OPENAI_API_KEY', '#openaiKeyState'], ['SEEDANCE_API_KEY', '#seedanceKeyState']]) {
@@ -69,15 +69,15 @@ document.querySelectorAll('[data-close-settings]').forEach(button => button.addE
 const videoTypeLabels = { volcengine: '火山引擎官方（Ark）', openai: 'OpenAI Video（兼容接口）', kyyReactApi: 'kyyReactApi' };
 const videoTypeDefaults = {
   volcengine: { base: 'https://ark.cn-beijing.volces.com/api/v3', model: 'doubao-seedance-2-0-260128' },
-  openai: { base: 'https://api.openai.com/v1', model: 'sora-2' },
+  openai: { base: 'https://new.every-ai.cc/v1', model: 'doubao-seedance-2-0-mini-260615' },
   kyyReactApi: { base: 'https://zcbservice.aizfw.cn/kyyReactApiServer', model: 'sd_2.0_special' },
 };
-let lastVideoType = 'volcengine';
+let lastVideoType = 'openai';
 function updateVideoApiHelp() {
   const type = $('#videoApiType').value;
   const hints = {
     volcengine: '接口根地址示例：https://ark.cn-beijing.volces.com/api/v3；模型示例：doubao-seedance-2-0-260128。',
-    openai: '接口根地址示例：https://api.openai.com/v1；使用 /videos 接口。模型填写服务商支持的名称，官方示例为 sora-2。',
+    openai: '默认接口根地址：https://new.every-ai.cc/v1；使用 /videos 接口。默认模型：doubao-seedance-2-0-mini-260615。',
     kyyReactApi: '接口根地址示例：https://zcbservice.aizfw.cn/kyyReactApiServer；模型示例：sd_2.0_special。可从素材库选择图片、视频和音频参考。',
   };
   $('#videoApiHelp').textContent = hints[type] + ' 切换类型不会改写地址、模型或密钥，请确认它们属于同一服务商。';

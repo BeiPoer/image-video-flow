@@ -5,13 +5,13 @@ import { videoApiTypes } from './video-api.js';
 
 export const defaults = {
   OPENAI_API_KEY: '',
-  OPENAI_BASE_URL: 'https://api.openai.com/v1',
+  OPENAI_BASE_URL: 'https://new.every-ai.cc/v1',
   OPENAI_IMAGE_MODEL: 'gpt-image-2',
-  VIDEO_API_TYPE: 'volcengine',
+  VIDEO_API_TYPE: 'openai',
   PUBLIC_ASSET_BASE_URL: '',
   SEEDANCE_API_KEY: '',
-  SEEDANCE_BASE_URL: 'https://ark.cn-beijing.volces.com/api/v3',
-  SEEDANCE_MODEL: 'doubao-seedance-2-0-260128',
+  SEEDANCE_BASE_URL: 'https://new.every-ai.cc/v1',
+  SEEDANCE_MODEL: 'doubao-seedance-2-0-mini-260615',
 };
 const secretFields = ['OPENAI_API_KEY', 'SEEDANCE_API_KEY'];
 const clearFields = secretFields.map(field => `CLEAR_${field}`);

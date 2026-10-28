@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { generateVideo, videoRequest } from '../video-api.js';
 import { defaults, validateSettings } from '../model-settings.js';
-const config = { ...defaults, SEEDANCE_BASE_URL: 'https://provider.example/root/', SEEDANCE_API_KEY: 'video-mock-secret' };
+const config = { ...defaults, VIDEO_API_TYPE: 'volcengine', SEEDANCE_BASE_URL: 'https://provider.example/root/', SEEDANCE_API_KEY: 'video-mock-secret' };
 const png = 'data:image/png;base64,aW1hZ2U=';
 function mockCalls(steps) {
   const calls = [];
@@ -21,8 +21,9 @@ function mockCalls(steps) {
   return { calls, options: { fetch, sleep: async () => {}, maxPolls: 3, pollInterval: 0 } };
 }
 
-test('video type defaults keep old Ark settings, reject unknown types and use protocol-specific parameters', () => {
-  assert.equal(defaults.VIDEO_API_TYPE, 'volcengine');
+test('video defaults use OpenAI, reject unknown types and use protocol-specific parameters', () => {
+  assert.equal(defaults.VIDEO_API_TYPE, 'openai');
+  assert.equal(videoRequest('test', null, {}, {...config, VIDEO_API_TYPE: undefined}).type, 'openai');
   assert.equal(validateSettings({ VIDEO_API_TYPE: 'kyyReactApi' }, defaults).VIDEO_API_TYPE, 'kyyReactApi');
   assert.throws(() => validateSettings({ VIDEO_API_TYPE: 'guess' }, defaults), { status: 400 });
   assert.throws(() => videoRequest('test', png, {}, { ...config, VIDEO_API_TYPE: 'kyyReactApi' }), /公网可访问 URL/);
