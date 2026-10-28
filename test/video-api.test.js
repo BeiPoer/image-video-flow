@@ -15,6 +15,7 @@ function mockCalls(steps) {
     assert.equal(call.method, step.method || 'GET');
     assert.equal(call.auth, 'Bearer video-mock-secret');
     if (step.check) step.check(call.body);
+    if (step.error) throw step.error;
     return step.response || Response.json(step.value, { status: step.status || 200 });
   };
   return { calls, options: { fetch, sleep: async () => {}, maxPolls: 3, pollInterval: 0 } };
@@ -82,6 +83,42 @@ test('OpenAI-compatible video_url completes without fetching protected content u
   const result = await generateVideo('test', null, {}, { ...config, VIDEO_API_TYPE: 'openai' }, undefined, mock.options);
   assert.equal(result.url, 'https://example.com/compat.mp4');
   assert.equal(mock.calls.length, 1);
+});
+
+test('OpenAI status polling recovers from network errors without submitting another paid job', async () => {
+  const mock = mockCalls([
+    { path:'/videos', method:'POST', value:{id:'retry-id',status:'in_progress'} },
+    { path:'/videos/retry-id', error:new TypeError('fetch failed', {cause:{code:'ECONNRESET'}}) },
+    { path:'/videos/retry-id', error:new DOMException('timed out','TimeoutError') },
+    { path:'/videos/retry-id', value:{status:'completed',video_url:'https://example.com/recovered.mp4'} },
+  ]);
+  const result = await generateVideo('test',null,{}, {...config,VIDEO_API_TYPE:'openai'},undefined,mock.options);
+  assert.equal(result.url,'https://example.com/recovered.mp4');
+  assert.equal(mock.calls.filter(call=>call.method==='POST').length,1);
+});
+
+test('persistent polling network errors stop after three retries and preserve task ID', async () => {
+  const updates=[];
+  const mock=mockCalls([
+    {path:'/videos',method:'POST',value:{id:'offline-id',status:'in_progress'}},
+    ...Array.from({length:4},()=>({path:'/videos/offline-id',error:new TypeError('fetch failed',{cause:{code:'ECONNRESET'}})})),
+  ]);
+  await assert.rejects(generateVideo('test',null,{}, {...config,VIDEO_API_TYPE:'openai'},update=>updates.push(update),{...mock.options,maxPolls:10}),err=>err.uncertain&&/查询视频状态.*ECONNRESET/.test(err.message));
+  assert.equal(mock.calls.length,5);
+  assert.equal(updates.at(-1).remoteTaskId,'offline-id');
+});
+
+test('submission network errors never retry POST; content errors identify an already generated video', async () => {
+  const offline=new TypeError('fetch failed',{cause:{code:'UND_ERR_SOCKET'}});
+  const submission=mockCalls([{path:'/videos',method:'POST',error:offline}]);
+  await assert.rejects(generateVideo('test',null,{}, {...config,VIDEO_API_TYPE:'openai'},undefined,submission.options),err=>err.uncertain&&/提交视频请求.*UND_ERR_SOCKET/.test(err.message));
+  assert.equal(submission.calls.length,1);
+  const content=mockCalls([
+    {path:'/videos',method:'POST',value:{id:'done-id',status:'completed'}},
+    {path:'/videos/done-id/content',error:offline},
+  ]);
+  await assert.rejects(generateVideo('test',null,{}, {...config,VIDEO_API_TYPE:'openai'},undefined,content.options),err=>err.uncertain&&/下载已生成的视频/.test(err.message));
+  assert.equal(content.calls.length,2);
 });
 
 test('kyyReactApi uploads an image, waits for ACTIVE, then uses assetId and result_url', async () => {

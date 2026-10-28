@@ -5,6 +5,10 @@ function invalid(message) { throw Object.assign(new Error(message), { status: 40
 function message(payload, fallback) {
   return typeof payload?.error === 'string' ? payload.error : payload?.error?.message || payload?.errorMessage || payload?.message || payload?.msg || fallback;
 }
+function networkError(err, stage) {
+  const code = /^[A-Z][A-Z0-9_]+$/.test(err.cause?.code || '') ? err.cause.code : err.name === 'TimeoutError' ? 'TIMEOUT' : 'NETWORK_ERROR';
+  return Object.assign(new Error(`${stage}时网络请求失败（${code}）；上游任务可能已受理或完成，请勿重复提交生成`), { networkError: true });
+}
 function kyyAsset(payload) {
   if (payload?.code != null && ![0, 200].includes(Number(payload.code))) throw new Error(message(payload, `素材接口错误码 ${payload.code}`));
   return payload?.data && typeof payload.data === 'object' ? payload.data : payload;
@@ -74,12 +78,13 @@ export async function generateVideo(prompt, image, params, config, onUpdate = as
   const interval = options.pollInterval ?? (type === 'openai' ? 10000 : 5000);
   const maxPolls = options.maxPolls ?? 120;
   async function json(pathname, value) {
-    const response = await fetcher(base + pathname, {
+    let response;
+    try { response = await fetcher(base + pathname, {
       method: value === undefined ? 'GET' : 'POST',
       headers: { authorization, ...(value === undefined ? {} : { 'content-type': 'application/json' }) },
       ...(value === undefined ? {} : { body: JSON.stringify(value) }),
       signal: AbortSignal.timeout(120000), redirect: 'error',
-    });
+    }); } catch (err) { throw networkError(err, value === undefined ? '查询视频状态' : '提交视频请求'); }
     let payload;
     try { payload = await response.json(); } catch { throw new Error(`视频接口返回非 JSON 内容（HTTP ${response.status}），请检查 Base URL 和接口类型`); }
     if (!response.ok) throw Object.assign(new Error(message(payload, `视频接口请求失败（HTTP ${response.status}）`)), { httpStatus: response.status });
@@ -121,6 +126,7 @@ export async function generateVideo(prompt, image, params, config, onUpdate = as
   const remoteId = job.id;
   const jobPath = `${path}/${encodeURIComponent(remoteId)}`;
   const done = type === 'volcengine' ? 'succeeded' : 'completed';
+  let networkFailures = 0;
   for (let attempt = 0; ; attempt++) {
     await onUpdate({ remoteTaskId: remoteId, upstreamStatus: job.status || 'queued', ...(Number.isFinite(job.progress) ? { progress: Math.max(0, Math.min(100, job.progress)) } : {}) });
     if (job.status === done) break;
@@ -128,8 +134,9 @@ export async function generateVideo(prompt, image, params, config, onUpdate = as
     if (job.status && !['queued', 'pending', 'processing', 'running', 'in_progress'].includes(job.status)) throw Object.assign(new Error(`无法识别的视频任务状态：${job.status}`), { uncertain: true });
     if (attempt >= maxPolls) throw Object.assign(new Error('视频仍未完成，已保留上游任务 ID，请核实状态后再决定是否重做'), { uncertain: true });
     await wait(interval);
-    try { job = await json(jobPath); }
+    try { job = await json(jobPath); networkFailures = 0; }
     catch (err) {
+      if (err.networkError && ++networkFailures <= 3 && attempt < maxPolls) continue;
       if ([429, 500, 502, 503, 504].includes(err.httpStatus) && attempt < maxPolls) continue;
       err.uncertain = true; throw err;
     }
@@ -137,7 +144,9 @@ export async function generateVideo(prompt, image, params, config, onUpdate = as
   const url = type === 'volcengine' ? job.content?.video_url || job.content?.video?.url : job.video_url || job.result_url || job.url;
   if (url) return { url: mediaUrl(url), remoteId, type };
   if (type !== 'openai') throw new Error('视频任务已完成，但接口没有返回视频地址');
-  const response = await fetcher(base + jobPath + '/content', { headers: { authorization }, signal: AbortSignal.timeout(120000), redirect: 'error' });
+  let response;
+  try { response = await fetcher(base + jobPath + '/content', { headers: { authorization }, signal: AbortSignal.timeout(120000), redirect: 'error' }); }
+  catch (err) { throw Object.assign(networkError(err, '下载已生成的视频'), { uncertain: true }); }
   if (!response.ok) throw new Error(`视频已生成，但下载失败（HTTP ${response.status}）；上游任务 ID 已保留`);
   const mime = response.headers.get('content-type')?.split(';')[0];
   if (mime && !['video/mp4', 'application/octet-stream'].includes(mime)) throw new Error('视频下载接口未返回 MP4 内容，请检查接口类型');
