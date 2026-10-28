@@ -86,6 +86,22 @@ test('OpenAI-compatible video_url completes without fetching protected content u
   assert.equal(mock.calls.length, 1);
 });
 
+test('OpenAI-compatible Seedance sends all nine references and ordered frame roles through metadata.content',()=>{
+  const cfg={...config,VIDEO_API_TYPE:'openai'};
+  const images=Array.from({length:9},(_,index)=>'https://example.test/'+index+'.png');
+  const refs=videoRequest('nine images',null,{referenceImages:images},cfg);
+  assert.deepEqual(refs.body.metadata.content,images.map(url=>({type:'image_url',image_url:{url},role:'reference_image'})));
+  assert.equal(refs.body.input_reference,undefined);
+  const frames=videoRequest('frames',null,{firstImage:png,lastImage:images[1]},cfg);
+  assert.deepEqual(frames.body.metadata.content,[{type:'image_url',image_url:{url:png},role:'first_frame'},{type:'image_url',image_url:{url:images[1]},role:'last_frame'}]);
+  assert.equal(videoRequest('first only',null,{firstImage:png},cfg).body.metadata.content.length,1);
+  assert.throws(()=>videoRequest('too many',null,{referenceImages:[...images,'https://example.test/10.png']},cfg),/数量超过/);
+  assert.throws(()=>videoRequest('mixed',null,{referenceImages:[png],firstImage:images[0]},cfg),/不能.*混用/);
+  assert.throws(()=>videoRequest('last only',null,{lastImage:png},cfg),/必须同时选择首帧/);
+  for(const value of [null,'',{},'javascript:alert(1)','assetId://kyy-only','data:image/svg+xml;base64,YQ=='])assert.throws(()=>videoRequest('invalid',null,{referenceImages:[value]},cfg));
+  assert.throws(()=>videoRequest('invalid list',null,{referenceImages:'https://example.test/a.png'},cfg),/必须是列表/);
+});
+
 test('OpenAI status polling recovers from network errors without submitting another paid job', async () => {
   const mock = mockCalls([
     { path:'/videos', method:'POST', value:{id:'retry-id',status:'in_progress'} },

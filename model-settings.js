@@ -79,7 +79,10 @@ export async function createSettingsStore(dataDir, env = process.env) {
   }
   function publicSettings() {
     const values = current();
-    for (const field of secretFields) values[`${field}_CONFIGURED`] = Boolean(values[field]);
+    for (const field of secretFields) {
+      values[`${field}_CONFIGURED`] = Boolean(values[field]);
+      delete values[field];
+    }
     return values;
   }
   let keyReady;

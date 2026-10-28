@@ -123,7 +123,7 @@ function prepThumbnail(item) {
   return '<article class="material-thumb '+(selected?'reference-selected':'')+'" data-image-id="'+esc(item.id)+'"><div class="material-thumb-picture"><button type="button" class="material-preview-button" draggable="true" data-drag-image="'+esc(item.id)+'" data-preview-image="'+esc(item.id)+'" aria-label="预览'+esc(item.name)+'" title="点击预览，拖入参考图区">'+preview(item)+'</button><button type="button" class="material-remove" data-action="remove-prep" aria-label="移除'+esc(item.name)+'" title="从工作区移除，原始图片保留">×</button></div><span class="material-name" title="'+esc(item.name)+'">'+esc(item.name)+'</span><div class="material-thumb-actions"><button type="button" data-action="use-image" '+(selected?'disabled':'')+'>'+(selected?'已添加参考':'添加参考')+'</button><button type="button" data-action="'+(confirmed?'remove-confirm':'confirm')+'">'+(confirmed?'✓ 已确认':'加入确认区')+'</button></div></article>';
 }
 function referenceThumbnail(id,index,video=false) {
-  const item=media(id),label=video&&state.videoApiType==='kyyReactApi'&&$('#videoFrameMode').value==='frames'?(index===0?'首帧':'尾帧'):String(index+1);
+  const item=media(id),label=video&&['kyyReactApi','openai'].includes(state.videoApiType)&&$('#videoFrameMode').value==='frames'?(index===0?'首帧':'尾帧'):String(index+1);
   return '<article class="reference-image"><button type="button" data-preview-image="'+esc(id)+'" aria-label="预览'+(video?'视频':'')+'参考图'+label+'：'+esc(item.name)+'">'+preview(item)+'</button><span class="reference-number">'+label+'</span><button type="button" class="material-remove" '+(video?'data-remove-video-reference':'data-remove-reference')+'="'+esc(id)+'" aria-label="取消'+(video?'视频':'')+'引用'+esc(item.name)+'" title="只取消本次引用，不移除素材">×</button><small>'+esc(item.name)+'</small></article>';
 }
 function deletedImageCard(item,confirmed=false) {
@@ -338,7 +338,7 @@ function updateVideoMode() {
   $('#videoRatioWrap').hidden = type === 'openai';
   $('#videoSizeWrap').hidden = type !== 'openai';
   $('#videoResolutionWrap').hidden = !kyy;
-  $('#videoFrameModeWrap').hidden = !kyy;
+  $('#videoFrameModeWrap').hidden = !kyy && type !== 'openai';
   $('#videoDuration').min = kyy ? '4' : '1';
   $('#videoDuration').max = kyy ? '15' : '60';
   $('#videoDurationRange').min = $('#videoDuration').min;
@@ -379,7 +379,7 @@ function chooseImage(id) {
   if(media(id)?.deletedAt)return showToast('资源已删除，不能作为参考图');
   if(!confirmedIds.includes(id)||!media(id))return showToast('请先将这张图片加入素材确认区');
   if(selectedImageIds.includes(id))return;
-  const max=state.videoApiType==='kyyReactApi'?($('#videoFrameMode').value==='frames'?2:9):1;
+  const max=['kyyReactApi','openai'].includes(state.videoApiType)?($('#videoFrameMode').value==='frames'?2:9):1;
   if(selectedImageIds.length>=max)return showToast('当前视频模式最多添加 '+max+' 张参考图，请先取消已有引用');
   selectedImageIds.push(id);renderConfirmed();renderVideo();
 }
@@ -449,12 +449,12 @@ async function generateVideo() {
   if(selectedImageIds.some(id=>media(id)?.deletedAt))return showToast('参考图片已删除，请重新选择');
   const records = selectedImageIds.filter(id => confirmedIds.includes(id)).map(media).filter(Boolean); if (!records.length) return showToast('请先从素材确认区选择视频素材');
   const type = state.videoApiType || 'openai'; const external = $('#videoExternalImage').value.trim();
-  if (type === 'kyyReactApi' && $('#videoFrameMode').value === 'reference' && records.length > 9) return showToast('kyyReactApi 最多选择 9 张参考图片');
+  if (['kyyReactApi','openai'].includes(type) && $('#videoFrameMode').value === 'reference' && records.length > 9) return showToast('最多选择 9 张参考图片');
   const params = { duration:Number($('#videoDuration').value), ...(type === 'openai' ? { videoSize:$('#videoSize').value } : { ratio:$('#videoRatio').value }), ...(type === 'kyyReactApi' ? { resolution:$('#videoResolution').value } : {}) };
   let body = { kind:'video', prompt, params, inputImageUrl:external || null };
-  if (type === 'kyyReactApi') {
-    if ($('#videoFrameMode').value === 'frames') { if (records.length > 2 || !records.length) return showToast('首尾帧模式请选择 1 或 2 张图片'); body.kyyMedia = { firstImageId:records[0].id, lastImageId:records[1]?.id || '' }; }
-    else body.kyyMedia = { referenceImageIds:external ? [] : records.map(item => item.id), referenceVideoIds:[], referenceAudioIds:[] };
+  if (['kyyReactApi','openai'].includes(type)) {
+    if ($('#videoFrameMode').value === 'frames') { if (records.length > 2 || !records.length) return showToast('首尾帧模式请选择 1 或 2 张图片'); body.videoMedia = external ? {} : { firstImageId:records[0].id, lastImageId:records[1]?.id || '' }; if(external){body.params.firstImage=external;body.inputImageUrl=null;} }
+    else body.videoMedia = { referenceImageIds:external ? [] : records.map(item => item.id), referenceVideoIds:[], referenceAudioIds:[] };
   } else { if (records.length > 1) return showToast('当前接口只支持一张参考图片'); body.inputImageId = external ? null : records[0].id; }
   submittingVideo = true; $('#generateVideoButton').disabled = true; $('#generateVideoButton').textContent = '正在提交…'; $('#videoError').hidden = true;
   try { const shot = await createShot('video', prompt); const task = await post('/api/tasks', { ...body, shotId:shot.id }); watchedVideoTaskIds.add(task.id); state.shots.unshift(shot); state.tasks.unshift(task); if(projectId===targetProject && $('#videoPrompt').value.trim()===prompt)$('#videoPrompt').value = ''; await refresh(); showToast('视频任务已提交，结果会出现在下方'); }

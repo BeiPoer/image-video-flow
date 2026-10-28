@@ -15,8 +15,8 @@ async function openSettings() {
     $('#publicAssetHelp').hidden = lastVideoType !== 'kyyReactApi' || state.cloudMediaEnabled;
     for (const [name, label] of [['OPENAI_API_KEY', '#openaiKeyState'], ['SEEDANCE_API_KEY', '#seedanceKeyState']]) {
       const configured = values[name + '_CONFIGURED'];
-      form.elements[name].value = values[name] || '';
-      form.elements[name].placeholder = configured ? '已配置，可直接编辑' : '尚未配置，请输入 API Key';
+      form.elements[name].value = '';
+      form.elements[name].placeholder = configured ? '********（已配置，留空保留）' : '尚未配置，请输入 API Key';
       $(label).textContent = configured ? '已配置' : '未配置';
       form.elements['CLEAR_' + name].disabled = !configured;
     }
@@ -77,7 +77,7 @@ function updateVideoApiHelp() {
   const type = $('#videoApiType').value;
   const hints = {
     volcengine: '接口根地址示例：https://ark.cn-beijing.volces.com/api/v3；模型示例：doubao-seedance-2-0-260128。',
-    openai: '默认接口根地址：https://new.every-ai.cc/v1；使用 /videos 接口。默认模型：doubao-seedance-2-0-mini-260615。',
+    openai: '默认接口根地址：https://new.every-ai.cc/v1；使用 /videos 接口。默认模型：doubao-seedance-2-0-mini-260615。多图和首尾帧需兼容服务商支持。',
     kyyReactApi: '接口根地址示例：https://zcbservice.aizfw.cn/kyyReactApiServer；模型示例：sd_2.0_special。可从素材库选择图片、视频和音频参考。',
   };
   $('#videoApiHelp').textContent = hints[type] + ' 切换类型不会改写地址、模型或密钥，请确认它们属于同一服务商。';

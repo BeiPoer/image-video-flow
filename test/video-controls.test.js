@@ -36,4 +36,14 @@ test('video choices are inline radios; duration slider and number stay synchroni
   node('videoDuration').value='40';node('videoDuration').handlers.input();assert.equal(node('videoDurationRange').value,'40');
   vm.runInContext("state.videoApiType='kyyReactApi';updateVideoMode()",context);
   assert.equal(node('videoDuration').value,'15');assert.equal(node('videoDurationRange').value,'15');
+  vm.runInContext("state.videoApiType='openai';state.assets=Array.from({length:10},(_,i)=>({id:'a'+i,kind:'image',name:'图'+i,dataUrl:'data:image/png;base64,YQ=='}));confirmedIds=state.assets.map(item=>item.id);selectedImageIds=[];updateVideoMode()",context);
+  assert.equal(node('videoFrameModeWrap').hidden,false);
+  node('videoFrameMode').value='reference';
+  vm.runInContext("for(const item of state.assets)chooseImage(item.id)",context);
+  assert.equal(vm.runInContext('selectedImageIds.length',context),9);
+  assert.match(node('toast').textContent,/最多添加 9 张/);
+  node('videoFrameMode').value='frames';vm.runInContext("selectedImageIds=[];chooseImage('a0');chooseImage('a1');chooseImage('a2')",context);
+  assert.equal(vm.runInContext('selectedImageIds.length',context),2);
+  assert.match(node('toast').textContent,/最多添加 2 张/);
+  assert.match(node('videoPicker').innerHTML,/首帧/);assert.match(node('videoPicker').innerHTML,/尾帧/);
 });

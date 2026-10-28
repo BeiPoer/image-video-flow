@@ -20,7 +20,9 @@ test('settings encrypt, persist, preserve blank keys and explicitly override env
   try {
     const env = { OPENAI_API_KEY: 'env-test-key' };
     let store = await createSettingsStore(dir, env);
-    assert.equal(store.publicSettings().OPENAI_API_KEY, 'env-test-key');
+    assert.equal(store.publicSettings().OPENAI_API_KEY, undefined);
+    assert.equal(store.publicSettings().OPENAI_API_KEY_CONFIGURED, true);
+    assert.equal(store.current().OPENAI_API_KEY, 'env-test-key');
     assert.equal(store.publicSettings().VIDEO_API_TYPE, 'openai');
     assert.equal(store.current().OPENAI_BASE_URL, 'https://new.every-ai.cc/v1');
     assert.equal(store.current().SEEDANCE_BASE_URL, 'https://new.every-ai.cc/v1');
@@ -130,10 +132,14 @@ test('page settings feed both providers live, protect keys and retain in-flight 
     assert.equal((await save({ OPENAI_BASE_URL: 'file:///etc/passwd' })).response.status, 400);
     const saved = await save({ OPENAI_BASE_URL: provider + '/v1/', OPENAI_IMAGE_MODEL: 'image-local', OPENAI_API_KEY: 'image-test-key', SEEDANCE_BASE_URL: provider + '/v3/', SEEDANCE_MODEL: 'video-local', SEEDANCE_API_KEY: 'video-test-key' });
     assert.equal(saved.response.status, 200);
-    assert.equal(saved.value.OPENAI_API_KEY, 'image-test-key');
-    assert.equal(saved.value.SEEDANCE_API_KEY, 'video-test-key');
-    assert.equal((await read('/api/settings')).OPENAI_API_KEY, 'image-test-key');
-    assert.equal((await read('/api/settings')).SEEDANCE_API_KEY, 'video-test-key');
+    const exposed = await read('/api/settings');
+    for (const values of [saved.value, exposed]) {
+      assert.equal(values.OPENAI_API_KEY, undefined);
+      assert.equal(values.SEEDANCE_API_KEY, undefined);
+      assert.equal(values.OPENAI_API_KEY_CONFIGURED, true);
+      assert.equal(values.SEEDANCE_API_KEY_CONFIGURED, true);
+      assert.doesNotMatch(JSON.stringify(values), /image-test-key|video-test-key/);
+    }
     const { value: project } = await call('/api/projects', { name: '配置验证项目' });
     const { value: shot } = await call('/api/shots', { projectId: project.id, name: '配置验证镜头' });
     async function waitTask(id) {

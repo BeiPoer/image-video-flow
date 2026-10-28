@@ -1,7 +1,7 @@
 export const CARD_WIDTH = 252;
 export const CARD_HEIGHT = 324;
 export function taskSources(task) {
-  const media = task?.params?.kyyMedia || {};
+  const media = task?.params?.videoMedia || task?.params?.kyyMedia || {};
   return [...new Set([...(task?.referenceImageIds || []), task?.inputImageId, ...(media.referenceImageIds || []), ...(media.referenceVideoIds || []), ...(media.referenceAudioIds || []), media.firstImageId, media.lastImageId].filter(Boolean))];
 }
 export function canvasGraph(state, projectId) {

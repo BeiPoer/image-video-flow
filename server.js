@@ -223,14 +223,15 @@ async function runTask(task, state, config = modelSettings.current()) {
     }
     if (task.kind === 'video' && configured('seedance', config)) {
       let videoParams = task.params;
-      if (task.videoApiType === 'kyyReactApi' && task.params.kyyMedia) {
-        const selections=task.params.kyyMedia; videoParams={...task.params}; delete videoParams.kyyMedia;
+      if (['kyyReactApi','openai'].includes(task.videoApiType) && (task.params.videoMedia || task.params.kyyMedia)) {
+        const selections=task.params.videoMedia || task.params.kyyMedia; videoParams={...task.params}; delete videoParams.videoMedia; delete videoParams.kyyMedia;
+        const reference=sourceId=>{const record=requireMedia(findMedia(state,sourceId));return task.videoApiType==='kyyReactApi'||cosStorage.enabled?kyyReferenceUrl(record,sourceId):record.dataUrl;};
         for(const [source,target] of [['referenceImageIds','referenceImages'],['referenceVideoIds','referenceVideos'],['referenceAudioIds','referenceAudios']]){
           const ids=selections[source]||[];
-          videoParams[target]=await Promise.all(ids.map(sourceId=>{const record=state.assets.find(item=>item.id===sourceId)||state.results.find(item=>item.id===sourceId);return kyyReferenceUrl(record,sourceId);}));
-          if(!videoParams[target].length)delete videoParams[target];
+          videoParams[target]=await Promise.all(ids.map(reference));
+          if(!videoParams[target].length && task.videoApiType!=='openai')delete videoParams[target];
         }
-        for(const [source,target] of [['firstImageId','firstImage'],['lastImageId','lastImage']])if(selections[source])videoParams[target]=await kyyReferenceUrl(state.assets.find(item=>item.id===selections[source])||state.results.find(item=>item.id===selections[source]),selections[source]);
+        for(const [source,target] of [['firstImageId','firstImage'],['lastImageId','lastImage']])if(selections[source])videoParams[target]=await reference(selections[source]);
       }
       const inputImageUrl = task.inputImageId
         ? (cosStorage.enabled || task.videoApiType === 'kyyReactApi' ? await kyyReferenceUrl(findMedia(state, task.inputImageId), task.inputImageId) : requireMedia(findMedia(state, task.inputImageId)).dataUrl)
@@ -371,7 +372,7 @@ async function api(req, res, pathname, url) {
     const index = state.assets.findIndex(asset => asset.id === assetId);
     if (index < 0) return error(res, '找不到素材', 404);
     if (state.shots.some(shot => shot.selectedImageId === assetId || (Array.isArray(shot.assetIds) && shot.assetIds.includes(assetId)))) return error(res, '素材仍被镜头引用，请先解除引用', 409);
-    if (state.tasks.some(task => ['queued', 'running'].includes(task.status) && (task.inputImageId === assetId || task.referenceImageIds?.includes(assetId) || Object.values(task.params?.kyyMedia || {}).some(value => Array.isArray(value) ? value.includes(assetId) : value === assetId)))) return error(res, '素材正在生成任务中使用，请等待任务结束', 409);
+    if (state.tasks.some(task => ['queued', 'running'].includes(task.status) && (task.inputImageId === assetId || task.referenceImageIds?.includes(assetId) || Object.values(task.params?.videoMedia || task.params?.kyyMedia || {}).some(value => Array.isArray(value) ? value.includes(assetId) : value === assetId)))) return error(res, '素材正在生成任务中使用，请等待任务结束', 409);
     const [removed] = state.assets.splice(index, 1);
     for (const project of state.projects) if (project.canvas) { project.canvas.assetIds = project.canvas.assetIds.filter(id => id !== assetId); delete project.canvas.positions[assetId]; project.canvas.hiddenNodeIds = (project.canvas.hiddenNodeIds || []).filter(id => id !== assetId); for (const node of project.canvas.generators || []) node.referenceImageIds = node.referenceImageIds.filter(id => id !== assetId); }
     await saveState(state);
@@ -403,12 +404,16 @@ async function api(req, res, pathname, url) {
     }
     if (body.kind === 'image' && (body.prompt.length > 32000 || !imageSizes.includes(params.size || '1024x1536'))) return error(res, '图片提示词过长或尺寸不受支持', 400);
     if(typeof params!=='object'||Array.isArray(params))return error(res,'无效的生成参数',400);
-    if(body.kind==='video'&&config.VIDEO_API_TYPE==='kyyReactApi'&&body.kyyMedia){
-      const media=body.kyyMedia, groups=[['referenceImageIds','image',9],['referenceVideoIds','video',3],['referenceAudioIds','audio',3]];
+    const videoMedia=body.videoMedia ?? body.kyyMedia;
+    if(body.videoMedia!==undefined&&body.kyyMedia!==undefined)return error(res,'不能同时提交两组视频素材',400);
+    if(videoMedia!==undefined&&(body.kind!=='video'||!['openai','kyyReactApi'].includes(config.VIDEO_API_TYPE)))return error(res,'当前接口不支持多图或首尾帧素材',400);
+    if(body.inputImageId&&videoMedia!==undefined)return error(res,'不能同时提交单图和多图素材',400);
+    if(body.kind==='video'&&videoMedia!==undefined){
+      const media=videoMedia, groups=[['referenceImageIds','image',9],['referenceVideoIds','video',3],['referenceAudioIds','audio',3]];
       if(!media||typeof media!=='object'||Array.isArray(media))return error(res,'参考素材格式无效',400);
       for (const sourceId of [...groups.flatMap(([field])=>Array.isArray(media[field])?media[field]:[]),media.firstImageId,media.lastImageId].filter(Boolean)) requireMedia(findMedia(state,sourceId));
       const hasSelected=groups.some(([field])=>(media[field]||[]).length)||media.firstImageId||media.lastImageId;
-      if(hasSelected&&!cosStorage.enabled&&!config.PUBLIC_ASSET_BASE_URL){const ids=[...(media.referenceImageIds||[]),...(media.referenceVideoIds||[]),...(media.referenceAudioIds||[]),media.firstImageId,media.lastImageId].filter(Boolean);const needsRelay=ids.some(sourceId=>{const record=state.assets.find(item=>item.id===sourceId)||state.results.find(item=>item.id===sourceId);return record?.dataUrl?.startsWith('data:') || record?.dataUrl?.startsWith('/api/video-results/');});if(needsRelay)return error(res,'请在模型设置填写公网 HTTPS 素材访问地址；本机素材需通过此地址供 kyyReactApi 读取。',400);} 
+      if(config.VIDEO_API_TYPE==='kyyReactApi'&&hasSelected&&!cosStorage.enabled&&!config.PUBLIC_ASSET_BASE_URL){const ids=[...(media.referenceImageIds||[]),...(media.referenceVideoIds||[]),...(media.referenceAudioIds||[]),media.firstImageId,media.lastImageId].filter(Boolean);const needsRelay=ids.some(sourceId=>{const record=state.assets.find(item=>item.id===sourceId)||state.results.find(item=>item.id===sourceId);return record?.dataUrl?.startsWith('data:') || record?.dataUrl?.startsWith('/api/video-results/');});if(needsRelay)return error(res,'请在模型设置填写公网 HTTPS 素材访问地址；本机素材需通过此地址供 kyyReactApi 读取。',400);}
       for(const[field,kind,max]of groups){const ids=media[field]||[];if(!Array.isArray(ids)||ids.length>max)return error(res,field+' 最多选择 '+max+' 个素材',400);for(const sourceId of ids){const record=state.assets.find(item=>item.id===sourceId)||state.results.find(item=>item.id===sourceId);if(!record||kyyRecordKind(record)!==kind||!kyyMimeTypes.has(kyyRecordMime(record)))return error(res,'参考素材不存在、类型不匹配或格式不受支持',400);}}
       for(const[field,kind]of[['firstImageId','image'],['lastImageId','image']])if(media[field]){const record=state.assets.find(item=>item.id===media[field])||state.results.find(item=>item.id===media[field]);if(!record||kyyRecordKind(record)!==kind||!kyyMimeTypes.has(kyyRecordMime(record)))return error(res,'首帧或尾帧素材不存在、类型不匹配或格式不受支持',400);}
       if((media.firstImageId||media.lastImageId)&&groups.some(([field])=>(media[field]||[]).length))return error(res,'首帧/尾帧不能与多模态参考素材混用',400);
@@ -416,12 +421,12 @@ async function api(req, res, pathname, url) {
     }
     if(body.kind==='video'&&configured('seedance',config)){
       try{
-        const media=body.kyyMedia||{};
-        const checked=config.VIDEO_API_TYPE==='kyyReactApi'?{...params,referenceImages:(media.referenceImageIds||[]).map(()=> 'https://asset-validation.invalid/image'),referenceVideos:(media.referenceVideoIds||[]).map(()=> 'https://asset-validation.invalid/video'),referenceAudios:(media.referenceAudioIds||[]).map(()=> 'https://asset-validation.invalid/audio'),firstImage:media.firstImageId?'https://asset-validation.invalid/first':undefined,lastImage:media.lastImageId?'https://asset-validation.invalid/last':undefined}:params;
+        const media=videoMedia||{};
+        const checked=videoMedia!==undefined?{...params,referenceImages:(media.referenceImageIds||[]).map(()=> 'https://asset-validation.invalid/image'),referenceVideos:(media.referenceVideoIds||[]).map(()=> 'https://asset-validation.invalid/video'),referenceAudios:(media.referenceAudioIds||[]).map(()=> 'https://asset-validation.invalid/audio'),firstImage:media.firstImageId?'https://asset-validation.invalid/first':params.firstImage,lastImage:media.lastImageId?'https://asset-validation.invalid/last':params.lastImage}:params;
         videoRequest(body.prompt,body.inputImageUrl,checked,config);
       }catch(err){return error(res,err.message,err.status||400);}
     }
-    const taskParams={...params};if(body.kind==='video'&&body.kyyMedia)taskParams.kyyMedia=body.kyyMedia;
+    const taskParams={...params};if(body.kind==='video'&&videoMedia!==undefined)taskParams.videoMedia=videoMedia;
     const task={id:id('task'),...(body.imageNodeId ? {imageNodeId:body.imageNodeId} : {}),shotId:body.shotId,kind:body.kind,prompt:body.prompt.trim(),inputImageUrl:body.inputImageUrl||null,inputImageId:body.inputImageId||null,referenceImageIds:[...new Set(referenceImageIds)],previousImageId:state.shots.find(shot=>shot.id===body.shotId).selectedImageId,params:taskParams,status:'queued',createdAt:now(),model:body.kind==='image'?config.OPENAI_IMAGE_MODEL:config.SEEDANCE_MODEL,...(body.kind==='video'?{videoApiType:config.VIDEO_API_TYPE}:{})};
     state.tasks.unshift(task);await saveState(state);void runTask(task,state,config);return send(res,202,task);
   }

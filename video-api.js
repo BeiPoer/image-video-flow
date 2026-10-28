@@ -14,6 +14,7 @@ function kyyAsset(payload) {
   return payload?.data && typeof payload.data === 'object' ? payload.data : payload;
 }
 function mediaUrl(value) {
+  if (typeof value !== 'string' || !value) invalid('素材地址必须是有效的 URL');
   let url;
   try { url = new URL(value); } catch { invalid('视频接口未返回有效的视频地址'); }
   if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password) invalid('视频接口返回了不支持的视频地址');
@@ -28,8 +29,8 @@ export function videoRequest(prompt, image, params = {}, config) {
   if (!Number.isInteger(duration) || duration < 1 || duration > 60) invalid('视频时长必须为 1–60 之间的整数');
   const ratio = params.ratio || '9:16';
   if (!['16:9', '9:16', '1:1', '4:3', '3:4', '21:9', 'adaptive'].includes(ratio)) invalid('不支持的视频画幅比例');
-  if (image && typeof image !== 'string') invalid('参考图必须是 URL 或图片数据');
-  if (image) {
+  function checkImage(image) {
+    if (typeof image !== 'string' || !image) invalid('参考图必须是 URL 或图片数据');
     if (/^assetId:\/\/[A-Za-z0-9_-]+$/.test(image)) {
       if (type !== 'kyyReactApi') invalid('assetId:// 仅适用于 kyyReactApi');
     } else if (image.startsWith('data:')) {
@@ -38,11 +39,30 @@ export function videoRequest(prompt, image, params = {}, config) {
       const encoded = image.slice(image.indexOf(',') + 1).replace(/\s/g, '');
       if (encoded.length > 40_000_000 || Buffer.from(encoded, 'base64').length > 30 * 1024 * 1024) invalid('参考图超过 30 MB，请缩小图片后重试');
     } else mediaUrl(image);
+    return image;
   }
+  if (image) checkImage(image);
   const body = { model: config.SEEDANCE_MODEL, prompt: prompt.trim() };
   if (type === 'openai') {
     const size = params.videoSize || ({ '9:16': '720x1280', '16:9': '1280x720' })[ratio];
     if (!size || !/^\d{3,4}x\d{3,4}$/.test(size)) invalid('OpenAI Video 需要明确的视频尺寸，例如 720x1280');
+    const lists=[params.referenceImages??[],params.referenceVideos??[],params.referenceAudios??[]];
+    if (!lists.every(Array.isArray)) invalid('参考素材必须是列表');
+    if (lists[0].length>9||lists[1].length>3||lists[2].length>3) invalid('参考素材数量超过接口限制（图片 9、视频 3、音频 3）');
+    const extended=params.referenceImages!==undefined||params.referenceVideos!==undefined||params.referenceAudios!==undefined||params.firstImage||params.lastImage;
+    if (extended) {
+      const images=[...new Set([...lists[0],...(image?[image]:[])])],videos=[...new Set(lists[1])],audios=[...new Set(lists[2])];
+      if (images.length>9) invalid('参考图片数量超过 9 张上限');
+      if ((params.firstImage||params.lastImage)&&(images.length||videos.length||audios.length)) invalid('首帧/尾帧不能与多模态参考素材混用');
+      if (params.lastImage&&!params.firstImage) invalid('使用尾帧时必须同时选择首帧');
+      if (audios.length&&!images.length&&!videos.length) invalid('参考音频必须同时包含图片或视频参考素材');
+      if ([...images,params.firstImage,params.lastImage].filter(value=>value!==undefined).some(value=>typeof value!=='string'||!value)) invalid('参考图必须是 URL 或图片数据');
+      const content=images.map(url=>({type:'image_url',image_url:{url:checkImage(url)},role:'reference_image'}));
+      for (const [values,kind] of [[videos,'video'],[audios,'audio']]) for (const url of values) content.push({type:kind+'_url',[kind+'_url']:{url:mediaUrl(url)},role:'reference_'+kind});
+      for (const [value,role] of [[params.firstImage,'first_frame'],[params.lastImage,'last_frame']]) if(value)content.push({type:'image_url',image_url:{url:checkImage(value)},role});
+      // New API's Seedance adapter forwards metadata.content with explicit reference/frame roles.
+      return {type,path:'/videos',body:{...body,seconds:String(duration),size,...(content.length?{metadata:{content}}:{})}};
+    }
     return { type, path: '/videos', body: { ...body, seconds: String(duration), size, ...(image ? { input_reference: { image_url: image } } : {}) } };
   }
   if (type === 'kyyReactApi') {

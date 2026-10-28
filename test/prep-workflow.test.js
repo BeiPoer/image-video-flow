@@ -81,7 +81,7 @@ test('two material rows support zero/multiple references, preserve drafts during
   assert.match(node('videoPicker').innerHTML,/首帧/);assert.match(node('videoPicker').innerHTML,/尾帧/);
   node('videoPrompt').value='首尾帧过渡';node('videoDuration').value='6';node('videoRatio').value='9:16';node('videoResolution').value='720p';
   await vm.runInContext('generateVideo()',context);const videoBody=calls.filter(c=>c.path==='/api/tasks').at(-1).body;
-  assert.equal(videoBody.kyyMedia.firstImageId,'r1');assert.equal(videoBody.kyyMedia.lastImageId,'a1');
+  assert.equal(videoBody.videoMedia.firstImageId,'r1');assert.equal(videoBody.videoMedia.lastImageId,'a1');
   node('clearVideoReferences').handlers.click();assert.equal(vm.runInContext('selectedImageIds.length',context),0);
   assert.equal(vm.runInContext('confirmedIds.length',context),2);
   vm.runInContext('var imported=[];uploadFiles=async files=>imported.push(files.map(file=>file.name));',context);

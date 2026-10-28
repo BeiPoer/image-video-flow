@@ -18,7 +18,7 @@ test('deletes unreferenced assets and protects referenced assets', async () => {
   assert.equal(asset.response.status, 201);
   const shot = await json('/api/shots', { method: 'POST', body: JSON.stringify({ projectId: project.value.id, name: '引用素材' }) });
   const patch = await json('/api/shots/' + shot.value.id, { method: 'PATCH', body: JSON.stringify({ assetIds: [asset.value.id] }) });
-  assert.equal(patch.response.status, 200);
+  assert.equal(patch.response.status, 200, JSON.stringify(patch.value));
   const blocked = await json('/api/assets/' + asset.value.id, { method: 'DELETE' });
   assert.equal(blocked.response.status, 409);
   await json('/api/shots/' + shot.value.id, { method: 'PATCH', body: JSON.stringify({ assetIds: [] }) });
