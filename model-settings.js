@@ -2,8 +2,10 @@ import { readFile, writeFile, mkdir, rename, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import crypto from 'node:crypto';
 import { videoApiTypes } from './video-api.js';
+import * as generationConfig from './public/generation-config.js';
 
 export const defaults = {
+  ...generationConfig.defaults,
   OPENAI_API_KEY: '',
   OPENAI_BASE_URL: 'https://new.every-ai.cc/v1',
   OPENAI_IMAGE_MODEL: 'gpt-image-2',
@@ -26,7 +28,17 @@ export function validateSettings(input, current) {
     if (!Object.hasOwn(input, field)) continue;
     if (typeof input[field] !== 'string' || input[field].length > 4096) invalid('配置值必须是长度不超过 4096 的文本');
     const value = input[field].trim();
-    if (field === 'OPENAI_IMAGE_MAX_COUNT') {
+    if (field === 'OPENAI_IMAGE_PRICE' || field.startsWith('VIDEO_PRICE_')) {
+      if (value && (!/^\d+(?:\.\d{1,4})?$/.test(value) || Number(value) > 1000000)) invalid('单价必须是 0～1000000 的金额，最多四位小数；留空表示未设置');
+      next[field] = value;
+    } else if (field === 'VIDEO_RESOLUTIONS') {
+      const selected = value.split(',');
+      if (!selected.length || selected.some(item => !generationConfig.resolutions.includes(item)) || new Set(selected).size !== selected.length) invalid('至少选择一种支持的视频分辨率');
+      next[field] = value;
+    } else if (field === 'VIDEO_MIN_SECONDS' || field === 'VIDEO_MAX_SECONDS') {
+      if (!/^\d+$/.test(value) || Number(value) < 1 || Number(value) > 30) invalid('视频时长上下限必须是 1～30 的整数');
+      next[field] = value;
+    } else if (field === 'OPENAI_IMAGE_MAX_COUNT') {
       if (!/^(?:[1-9]|10)$/.test(value)) invalid('生图上限必须是 1～10 的整数');
       next[field] = value;
     } else if (field === 'VIDEO_API_TYPE') {
@@ -58,6 +70,7 @@ export function validateSettings(input, current) {
       next[field] = '';
     }
   }
+  if (Number(next.VIDEO_MIN_SECONDS) > Number(next.VIDEO_MAX_SECONDS)) invalid('视频时长下限不能大于上限');
   return next;
 }
 
@@ -79,7 +92,9 @@ export async function createSettingsStore(dataDir, env = process.env) {
     } catch { throw new Error('无法读取模型配置，请同时恢复 settings.enc 与 settings.key 的备份'); }
   }
   function current() {
-    return Object.fromEntries(Object.entries(defaults).map(([field, fallback]) => [field, saved[field] ?? (env[field] || fallback)]));
+    const values = Object.fromEntries(Object.entries(defaults).map(([field, fallback]) => [field, saved[field] ?? (env[field] || fallback)]));
+    values.VIDEO_MAX_SECONDS = String(Math.min(Number(values.VIDEO_MAX_SECONDS), 30));
+    return values;
   }
   function publicSettings() {
     const values = current();

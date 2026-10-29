@@ -1,3 +1,4 @@
+import * as generationConfig from '../public/generation-config.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
@@ -23,7 +24,7 @@ test('saved results refill prompts, ordered reference IDs and generation setting
     {id:'video-task',shotId:'s1',kind:'video',status:'completed',prompt:'从 @图1 过渡到 @图2',params:{duration:12,videoSize:'1280x720',videoMedia:{firstImageId:'a2',lastImageId:'a1'}},videoApiType:'openai',createdAt},
     {id:'foreign-task',shotId:'s2',kind:'image',prompt:'其他项目',referenceImageIds:['a1'],createdAt},
   ],models:{},providers:{},videoApiType:'openai',imageMaxCount:10};
-  const context=vm.createContext({projectVideos,setStableMarkup,renderVideoCards,imageRatios,document,window:{location:{hash:'#/project/p1'},addEventListener(){}},console,structuredClone,setTimeout(){},clearTimeout(){},bindSettings(){},fetch:async(path,options)=>{
+  const context=vm.createContext({generationConfig,projectVideos,setStableMarkup,renderVideoCards,imageRatios,document,window:{location:{hash:'#/project/p1'},addEventListener(){}},console,structuredClone,setTimeout(){},clearTimeout(){},bindSettings(){},fetch:async(path,options)=>{
     const body=options?.body?JSON.parse(options.body):null;calls.push({path,body});
     if(path==='/api/projects/p1')data.projects[0].canvas=structuredClone(body.canvas);
     return {ok:true,json:async()=>structuredClone(data)};

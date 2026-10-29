@@ -1,3 +1,4 @@
+import * as generationConfig from '../public/generation-config.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
@@ -14,7 +15,7 @@ test('home lists projects without auto-entering, project routes restore on reloa
     const nodes=new Map(),calls=[],events={},location={hash};
     const node=id=>{if(!nodes.has(id))nodes.set(id,{id,innerHTML:'',value:'',textContent:'',hidden:false,handlers:{},addEventListener(type,fn){this.handlers[type]=fn;},querySelector(){return node('submit');},reset(){this.wasReset=true;},closest(){return node('projectDialog');},showModal(){this.open=true;},close(){this.open=false;}});return nodes.get(id);};
     const history={pushState(a,b,url){location.hash=url;},replaceState(a,b,url){location.hash=url;}};
-    const ctx=vm.createContext({projectVideos,setStableMarkup,renderVideoCards,imageRatios,document:{body:node('body'),querySelector:s=>node(s.slice(1)),querySelectorAll:()=>[]},window:{location,history,scrollTo(){},addEventListener(name,fn){events[name]=fn;}},console,structuredClone,setTimeout(){},clearTimeout(){},bindSettings(){},FormData:class{*[Symbol.iterator](){yield ['name','新建测试'];}},fetch:async(path,options)=>{
+    const ctx=vm.createContext({generationConfig,projectVideos,setStableMarkup,renderVideoCards,imageRatios,document:{body:node('body'),querySelector:s=>node(s.slice(1)),querySelectorAll:()=>[]},window:{location,history,scrollTo(){},addEventListener(name,fn){events[name]=fn;}},console,structuredClone,setTimeout(){},clearTimeout(){},bindSettings(){},FormData:class{*[Symbol.iterator](){yield ['name','新建测试'];}},fetch:async(path,options)=>{
       const body=options?.body?JSON.parse(options.body):null;calls.push({path,body,method:options?.method});let result=data;
       if(path==='/api/projects'){result={id:'p3',...body};data.projects.unshift(result);}
       if(path.startsWith('/api/projects/')){data.projects.find(p=>p.id===path.split('/').pop()).canvas=structuredClone(body.canvas);result={ok:true};}

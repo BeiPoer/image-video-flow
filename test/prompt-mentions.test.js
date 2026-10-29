@@ -1,3 +1,4 @@
+import * as generationConfig from '../public/generation-config.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
@@ -26,7 +27,7 @@ test('image and video mentions filter current references and insert at the caret
     {id:'a1',projectId:'p1',kind:'image',name:'人物 <演员>.png',dataUrl:'/api/media/asset-a1'},
     {id:'a2',projectId:'p1',kind:'image',name:'风景.png',dataUrl:'/api/media/asset-a2'},
   ],results:[],tasks:[],models:{},providers:{},videoApiType:'openai'};
-  const context=vm.createContext({projectVideos,setStableMarkup,renderVideoCards,imageRatios,document,Event,ResizeObserver:class{observe(){}},getComputedStyle:()=>({}),window:{location:{hash:'#/project/p1'},addEventListener(type,fn){(events[type]||=[]).push(fn);}},console,structuredClone,setTimeout(){},clearTimeout(){},bindSettings(){},fetch:async(path,options)=>{
+  const context=vm.createContext({generationConfig,projectVideos,setStableMarkup,renderVideoCards,imageRatios,document,Event,ResizeObserver:class{observe(){}},getComputedStyle:()=>({}),window:{location:{hash:'#/project/p1'},addEventListener(type,fn){(events[type]||=[]).push(fn);}},console,structuredClone,setTimeout(){},clearTimeout(){},bindSettings(){},fetch:async(path,options)=>{
     const body=options?.body?JSON.parse(options.body):null;calls.push({path,body});
     return {ok:true,json:async()=>structuredClone(path==='/api/shots'?{id:'s1',...body}:path==='/api/tasks'?{id:'t1',status:'queued',...body}:data)};
   }});

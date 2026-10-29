@@ -1,3 +1,4 @@
+import * as generationConfig from '../public/generation-config.js';
 import {projectVideos} from '../public/video-confirmation.js';
 import {setStableMarkup} from '../public/stable-render.js';
 import {renderVideoCards} from './fixtures/render-dom.js';
@@ -39,7 +40,7 @@ test('image placeholders survive fresh page state, do not block more submissions
   let seq=0,bootstrapCalls=0;
   function browser(){
     const nodes=new Map();const node=id=>{if(!nodes.has(id))nodes.set(id,{innerHTML:'',textContent:'',value:'',hidden:false,disabled:false,addEventListener(){}});return nodes.get(id);};
-    const ctx=vm.createContext({projectVideos,setStableMarkup,renderVideoCards,imageRatios,document:{body:node('body'),querySelector:s=>node(s.slice(1)),querySelectorAll:()=>[]},window:{location:{hash:'#/project/p1'},addEventListener(){}},console,structuredClone,setTimeout(){},clearTimeout(){},bindSettings(){},fetch:async(path,options)=>{
+    const ctx=vm.createContext({generationConfig,projectVideos,setStableMarkup,renderVideoCards,imageRatios,document:{body:node('body'),querySelector:s=>node(s.slice(1)),querySelectorAll:()=>[]},window:{location:{hash:'#/project/p1'},addEventListener(){}},console,structuredClone,setTimeout(){},clearTimeout(){},bindSettings(){},fetch:async(path,options)=>{
       const body=options?.body?JSON.parse(options.body):null;let result=data;
       if(path==='/api/bootstrap')bootstrapCalls++;
       if(path==='/api/shots'){result={id:'shot-'+(++seq),...body};data.shots.push(result);}

@@ -1,3 +1,4 @@
+import * as generationConfig from './generation-config.js';
 export function bindSettings({ $, request, state, showToast, render, updateMode }) {
 let settingsSaving = false;
 let settingsOpening = false;
@@ -10,6 +11,9 @@ async function openSettings() {
     const form = $('#settingsForm'); form.reset();
     settingsToken = values.settingsToken;
     for (const name of ['OPENAI_BASE_URL', 'OPENAI_IMAGE_MODEL', 'OPENAI_IMAGE_MAX_COUNT', 'SEEDANCE_BASE_URL', 'SEEDANCE_MODEL', 'VIDEO_API_TYPE', 'PUBLIC_ASSET_BASE_URL']) form.elements[name].value = values[name];
+    for (const [name, value] of Object.entries(generationConfig.settings(values))) form.elements[name].value = value;
+    for (const input of form.querySelectorAll('[data-supported-resolution]')) input.checked = form.elements.VIDEO_RESOLUTIONS.value.split(',').includes(input.value);
+    updateDurationLimit();
     lastVideoType = values.VIDEO_API_TYPE || 'openai';
     $('#publicAssetBaseField').hidden = !['kyyReactApi','openai'].includes(lastVideoType) || state.cloudMediaEnabled;
     $('#publicAssetHelp').hidden = !['kyyReactApi','openai'].includes(lastVideoType) || state.cloudMediaEnabled;
@@ -30,6 +34,7 @@ async function saveSettings(event) {
   if (settingsSaving) return;
   const form = event.currentTarget;
   const values = Object.fromEntries(new FormData(form));
+  values.VIDEO_RESOLUTIONS = [...form.querySelectorAll('[data-supported-resolution]')].filter(input=>input.checked).map(input=>input.value).join(',');
   for (const name of ['CLEAR_OPENAI_API_KEY', 'CLEAR_SEEDANCE_API_KEY']) {
     values[name] = form.elements[name].checked;
     if (values[name]) values[name.replace('CLEAR_', '')] = '';
@@ -45,6 +50,7 @@ async function saveSettings(event) {
     state.providers = { openai: saved.OPENAI_API_KEY_CONFIGURED ? 'configured' : 'demo', seedance: saved.SEEDANCE_API_KEY_CONFIGURED ? 'configured' : 'demo' };
     state.models = { openai: saved.OPENAI_IMAGE_MODEL, seedance: saved.SEEDANCE_MODEL };
     state.imageMaxCount = Number(saved.OPENAI_IMAGE_MAX_COUNT);
+    state.generation = generationConfig.settings(saved);
     state.videoApiType = saved.VIDEO_API_TYPE;
     state.publicAssetBaseUrl = saved.PUBLIC_ASSET_BASE_URL;
     lastVideoType = saved.VIDEO_API_TYPE;
@@ -62,6 +68,20 @@ async function saveSettings(event) {
   }
 }
 $('#settingsForm').addEventListener('submit', saveSettings);
+function updateDurationLimit(event) {
+  const form = $('#settingsForm'), low = form.elements.VIDEO_MIN_SECONDS, high = form.elements.VIDEO_MAX_SECONDS;
+  for (const input of [low, high]) input.value = String(Math.max(1, Math.min(30, Number(input.value))));
+  if (Number(low.value) > Number(high.value)) {
+    if (event?.target === low) high.value = low.value;
+    else low.value = high.value;
+  }
+  $('#videoMinSecondsValue').textContent = low.value + ' 秒';
+  $('#videoMaxSecondsValue').textContent = high.value + ' 秒';
+  $('#videoDurationBounds').style.setProperty('--range-min', (Number(low.value) - 1) / 29 * 100 + '%');
+  $('#videoDurationBounds').style.setProperty('--range-max', (Number(high.value) - 1) / 29 * 100 + '%');
+}
+$('#videoMinSeconds').addEventListener('input', updateDurationLimit);
+$('#videoMaxSeconds').addEventListener('input', updateDurationLimit);
 $('#settingsDialog').addEventListener('cancel', (event) => { if (settingsSaving) event.preventDefault(); });
 $('#settingsDialog').addEventListener('close', () => { $('#settingsForm').reset(); settingsToken = ''; });
 document.querySelectorAll('[data-close-settings]').forEach(button => button.addEventListener('click', () => { if (!settingsSaving) $('#settingsDialog').close(); }));
@@ -84,6 +104,7 @@ function updateVideoApiHelp() {
   $('#videoApiHelp').textContent = hints[type] + ' 切换类型不会改写地址、模型或密钥，请确认它们属于同一服务商。';
 }
 $('#videoApiType').addEventListener('change', () => {
+  updateDurationLimit();
   const nextType = $('#videoApiType').value;
   const previous = videoTypeDefaults[lastVideoType];
   const next = videoTypeDefaults[nextType];

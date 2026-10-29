@@ -1,3 +1,4 @@
+import * as generationConfig from '../public/generation-config.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
@@ -12,7 +13,7 @@ test('expired images and videos retain placeholders, clear drafts and previews, 
   const nodes=new Map(),calls=[];
   function node(id){if(!nodes.has(id))nodes.set(id,{innerHTML:'',textContent:'',value:'',hidden:false,handlers:{},classList:{add(){},remove(){},toggle(){}},addEventListener(type,fn){this.handlers[type]=fn;},showModal(){this.open=true;},close(){this.open=false;this.handlers.close?.();},removeAttribute(name){delete this[name];}});return nodes.get(id);}
   const data={projects:[{id:'p',canvas:{workflow:'confirmed-materials-v1',assetIds:['a'],positions:{},viewport:{x:0,y:0,zoom:1}}}],shots:[{id:'s',projectId:'p'}],assets:[{id:'a',projectId:'p',kind:'image',name:'上传图片',dataUrl:'data:image/png;base64,YQ=='}],results:[{id:'i',shotId:'s',taskId:'ti',kind:'image',name:'生成图片',dataUrl:'data:image/png;base64,Yg=='},{id:'v',shotId:'s',taskId:'tv',kind:'video',name:'生成视频',provider:'openai',dataUrl:'https://example.test/video.mp4'}],tasks:[{id:'ti',shotId:'s',kind:'image',status:'completed'},{id:'tv',shotId:'s',kind:'video',status:'completed'}],models:{},providers:{},videoApiType:'openai'};
-  const context=vm.createContext({projectVideos,setStableMarkup,renderVideoCards,imageRatios,structuredClone,console,setTimeout(){},clearTimeout(){},bindSettings(){},document:{body:node('body'),querySelector:selector=>node(selector.slice(1)),querySelectorAll:()=>[]},window:{location:{hash:'#/project/p'},addEventListener(){}},fetch:async(path,options)=>{calls.push({path,options});return{ok:true,json:async()=>structuredClone(data)};}});
+  const context=vm.createContext({generationConfig,projectVideos,setStableMarkup,renderVideoCards,imageRatios,structuredClone,console,setTimeout(){},clearTimeout(){},bindSettings(){},document:{body:node('body'),querySelector:selector=>node(selector.slice(1)),querySelectorAll:()=>[]},window:{location:{hash:'#/project/p'},addEventListener(){}},fetch:async(path,options)=>{calls.push({path,options});return{ok:true,json:async()=>structuredClone(data)};}});
   vm.runInContext(script,context);await vm.runInContext('refresh()',context);
   vm.runInContext("addImageReference('a');chooseImage('a');openImagePreview('a')",context);
   assert.equal(node('imagePreviewDialog').open,true);

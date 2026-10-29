@@ -1,3 +1,4 @@
+import * as generationConfig from './public/generation-config.js';
 import { imageSizes } from './public/image-sizes.js';
 import { projectVideos } from './public/video-confirmation.js';
 import { videoFile, downloadName } from './video-download.js';
@@ -357,7 +358,7 @@ async function api(req, res, pathname, url) {
     }catch(err){if(res.headersSent)res.destroy();else error(res,err.message || '视频下载失败',err.status || 502);}
     return;
   }
-  if (req.method === 'GET' && pathname === '/api/bootstrap') return send(res, 200, { ...state, assets:state.assets.map(publicMedia), results:state.results.map(publicMedia), tasks:state.tasks.map(publicTask), providers: { openai: configured('openai') ? 'configured' : 'demo', seedance: configured('seedance') ? 'configured' : 'demo' }, models: { openai: modelSettings.current().OPENAI_IMAGE_MODEL, seedance: modelSettings.current().SEEDANCE_MODEL }, imageMaxCount: Number(modelSettings.current().OPENAI_IMAGE_MAX_COUNT), videoApiType: modelSettings.current().VIDEO_API_TYPE, publicAssetBaseUrl: modelSettings.current().PUBLIC_ASSET_BASE_URL, cloudMediaEnabled: cosStorage.enabled });
+  if (req.method === 'GET' && pathname === '/api/bootstrap') return send(res, 200, { ...state, assets:state.assets.map(publicMedia), results:state.results.map(publicMedia), tasks:state.tasks.map(publicTask), providers: { openai: configured('openai') ? 'configured' : 'demo', seedance: configured('seedance') ? 'configured' : 'demo' }, models: { openai: modelSettings.current().OPENAI_IMAGE_MODEL, seedance: modelSettings.current().SEEDANCE_MODEL }, generation: generationConfig.settings(modelSettings.current()), imageMaxCount: Number(modelSettings.current().OPENAI_IMAGE_MAX_COUNT), videoApiType: modelSettings.current().VIDEO_API_TYPE, publicAssetBaseUrl: modelSettings.current().PUBLIC_ASSET_BASE_URL, cloudMediaEnabled: cosStorage.enabled });
   if (req.method === 'PATCH' && pathname.startsWith('/api/projects/')) {
     const project = state.projects.find(item => item.id === pathname.split('/').pop());
     if (!project) return error(res, '找不到画布', 404);
@@ -440,6 +441,13 @@ async function api(req, res, pathname, url) {
     if (body.kind === 'image' && (body.prompt.length > 32000 || !imageSizes.includes(params.size || '1024x1536'))) return error(res, '图片提示词过长或尺寸不受支持', 400);
     if(typeof params!=='object'||Array.isArray(params))return error(res,'无效的生成参数',400);
     if (body.kind === 'image' && params.n !== undefined && (!Number.isInteger(params.n) || params.n < 1 || params.n > Number(config.OPENAI_IMAGE_MAX_COUNT))) return error(res, `生成数量必须是 1～${config.OPENAI_IMAGE_MAX_COUNT} 的整数`, 400);
+    if (body.kind === 'video') {
+      const limits = generationConfig.videoLimits(config);
+      params.duration ??= Math.max(limits.min, Math.min(limits.max, config.VIDEO_API_TYPE === 'openai' ? 8 : 6));
+      params.resolution ??= generationConfig.resolutionForSize(params.videoSize) || (limits.resolutions.includes('720p') ? '720p' : limits.resolutions[0]);
+      if (!Number.isInteger(params.duration) || params.duration < limits.min || params.duration > limits.max) return error(res, '视频时长超出模型设置范围', 400);
+      if (!limits.resolutions.includes(params.resolution)) return error(res, '该分辨率未在模型设置中启用', 400);
+    }
     const videoMedia=body.videoMedia ?? body.kyyMedia;
     if(body.videoMedia!==undefined&&body.kyyMedia!==undefined)return error(res,'不能同时提交两组视频素材',400);
     if(videoMedia!==undefined&&(body.kind!=='video'||!['openai','kyyReactApi'].includes(config.VIDEO_API_TYPE)))return error(res,'当前接口不支持多图或首尾帧素材',400);
@@ -474,7 +482,7 @@ async function api(req, res, pathname, url) {
       }catch(err){return error(res,err.message,err.status||400);}
     }
     const taskParams={...params};if(body.kind==='video'&&videoMedia!==undefined)taskParams.videoMedia=videoMedia;
-    const task={id:id('task'),...(body.imageNodeId ? {imageNodeId:body.imageNodeId} : {}),shotId:body.shotId,kind:body.kind,prompt:body.prompt.trim(),inputImageUrl:body.inputImageUrl||null,inputImageId:body.inputImageId||null,referenceImageIds:[...new Set(referenceImageIds)],previousImageId:state.shots.find(shot=>shot.id===body.shotId).selectedImageId,params:taskParams,status:'queued',createdAt:now(),model:body.kind==='image'?config.OPENAI_IMAGE_MODEL:config.SEEDANCE_MODEL,...(body.kind==='video'?{videoApiType:config.VIDEO_API_TYPE}:{})};
+    const task={id:id('task'),estimatedCost:generationConfig.estimate(body.kind,params,config),...(body.imageNodeId ? {imageNodeId:body.imageNodeId} : {}),shotId:body.shotId,kind:body.kind,prompt:body.prompt.trim(),inputImageUrl:body.inputImageUrl||null,inputImageId:body.inputImageId||null,referenceImageIds:[...new Set(referenceImageIds)],previousImageId:state.shots.find(shot=>shot.id===body.shotId).selectedImageId,params:taskParams,status:'queued',createdAt:now(),model:body.kind==='image'?config.OPENAI_IMAGE_MODEL:config.SEEDANCE_MODEL,...(body.kind==='video'?{videoApiType:config.VIDEO_API_TYPE}:{})};
     state.tasks.unshift(task);await saveState(state);void runTask(task,state,config);return send(res,202,task);
   }
   if (req.method === 'POST' && pathname.startsWith('/api/results/')) { const result = state.results.find((r) => r.id === pathname.split('/').pop()); if (!result) return error(res, '找不到结果', 404); requireMedia(result); const body = await jsonBody(req); const shot = state.shots.find((s) => s.id === result.shotId); if (!shot) return error(res, '找不到镜头', 404); if (result.kind === 'image') shot.selectedImageId = result.id; if (result.kind === 'video') shot.selectedVideoId = result.id; await saveState(state); return send(res, 200, shot); }

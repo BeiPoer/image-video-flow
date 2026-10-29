@@ -1,3 +1,4 @@
+import * as generationConfig from '../public/generation-config.js';
 import {projectVideos} from '../public/video-confirmation.js';
 import {setStableMarkup} from '../public/stable-render.js';
 import {renderVideoCards} from './fixtures/render-dom.js';
@@ -19,7 +20,7 @@ test('old video failures stay in history, current failures are separate dated al
     {id:'active',shotId:'s1',kind:'video',status:'running',progress:42.7,prompt:'当前任务',createdAt},
     {id:'queue',shotId:'s1',kind:'video',status:'queued',prompt:'排队任务',createdAt},
   ],models:{},providers:{}};
-  const context=vm.createContext({projectVideos,setStableMarkup,renderVideoCards,imageRatios,document:{body:node('body'),querySelector:selector=>node(selector.slice(1)),querySelectorAll:()=>[]},window:{location:{hash:'#/project/p1'},addEventListener(){}},console,structuredClone,setTimeout(){},clearTimeout(){},preprocessingGraph:()=>({nodes:[],edges:[]}),bindPrepCanvas:()=>({update(){}}),bindSettings(){},fetch:async()=>({ok:true,json:async()=>structuredClone(data)})});
+  const context=vm.createContext({generationConfig,projectVideos,setStableMarkup,renderVideoCards,imageRatios,document:{body:node('body'),querySelector:selector=>node(selector.slice(1)),querySelectorAll:()=>[]},window:{location:{hash:'#/project/p1'},addEventListener(){}},console,structuredClone,setTimeout(){},clearTimeout(){},preprocessingGraph:()=>({nodes:[],edges:[]}),bindPrepCanvas:()=>({update(){}}),bindSettings(){},fetch:async()=>({ok:true,json:async()=>structuredClone(data)})});
   vm.runInContext(script,context);await vm.runInContext('refresh()',context);
   assert.doesNotMatch(node('videoResults').innerHTML,/旧 multipart|旧待核实|失败/);
   assert.match(node('videoResults').innerHTML,/成功的视频/);

@@ -1,3 +1,4 @@
+import * as generationConfig from '../public/generation-config.js';
 import {projectVideos} from '../public/video-confirmation.js';
 import {setStableMarkup} from '../public/stable-render.js';
 import {renderVideoCards} from './fixtures/render-dom.js';
@@ -17,25 +18,25 @@ test('video choices are inline radios; duration slider and number stay synchroni
   const node=id=>{if(!nodes.has(id))nodes.set(id,{value:'',innerHTML:'',textContent:'',handlers:{},hidden:false,addEventListener(type,fn){this.handlers[type]=fn;}});return nodes.get(id);};
   node('videoDuration').value='6';node('videoDurationRange').value='6';
   const data={projects:[],shots:[],assets:[],results:[],tasks:[],models:{},providers:{},videoApiType:'kyyReactApi'};
-  const context=vm.createContext({projectVideos,setStableMarkup,renderVideoCards,imageRatios,document:{body:node('body'),querySelector:s=>node(s.slice(1)),querySelectorAll:()=>[]},window:{addEventListener(){}},console,structuredClone,setTimeout(){},clearTimeout(){},bindSettings(){},fetch:async()=>({ok:true,json:async()=>structuredClone(data)})});
+  const context=vm.createContext({generationConfig,projectVideos,setStableMarkup,renderVideoCards,imageRatios,document:{body:node('body'),querySelector:s=>node(s.slice(1)),querySelectorAll:()=>[]},window:{addEventListener(){}},console,structuredClone,setTimeout(){},clearTimeout(){},bindSettings(){},fetch:async()=>({ok:true,json:async()=>structuredClone(data)})});
   vm.runInContext(script,context);await vm.runInContext('refresh()',context);
-  assert.equal(node('videoDurationRange').min,'4');assert.equal(node('videoDurationRange').max,'15');
+  assert.equal(node('videoDurationRange').min,'1');assert.equal(node('videoDurationRange').max,'30');
   node('videoDurationRange').value='12';node('videoDurationRange').handlers.input();assert.equal(node('videoDuration').value,'12');
   node('videoDuration').value='9';node('videoDuration').handlers.input();assert.equal(node('videoDurationRange').value,'9');
   node('videoDuration').value='';node('videoDuration').handlers.input();vm.runInContext('render()',context);assert.equal(node('videoDuration').value,'','polling must not interrupt an unfinished edit');
   node('videoDuration').handlers.change();assert.equal(node('videoDuration').value,'9');
-  node('videoDuration').value='99';node('videoDuration').handlers.change();assert.equal(node('videoDuration').value,'15');
-  node('videoDuration').value='2';node('videoDuration').handlers.change();assert.equal(node('videoDuration').value,'4');
+  node('videoDuration').value='99';node('videoDuration').handlers.change();assert.equal(node('videoDuration').value,'30');
+  node('videoDuration').value='2';node('videoDuration').handlers.change();assert.equal(node('videoDuration').value,'2');
   node('videoDuration').value='6.4';node('videoDuration').handlers.change();assert.equal(node('videoDuration').value,'6');
   for(const [field,value] of [['videoRatio','16:9'],['videoResolution','1080p'],['videoFrameMode','frames'],['videoSize','1280x720']]){
     node('videoOptions').handlers.change({target:{dataset:{videoOption:field},value}});
     assert.equal(node(field).value,value);
   }
   vm.runInContext("state.videoApiType='openai';updateVideoMode()",context);
-  assert.equal(node('videoRatioWrap').hidden,true);assert.equal(node('videoSizeWrap').hidden,false);assert.equal(node('videoDurationRange').max,'60');
-  node('videoDuration').value='40';node('videoDuration').handlers.input();assert.equal(node('videoDurationRange').value,'40');
+  assert.equal(node('videoRatioWrap').hidden,true);assert.equal(node('videoSizeWrap').hidden,false);assert.equal(node('videoDurationRange').max,'30');
+  node('videoDuration').value='30';node('videoDuration').handlers.input();assert.equal(node('videoDurationRange').value,'30');
   vm.runInContext("state.videoApiType='kyyReactApi';updateVideoMode()",context);
-  assert.equal(node('videoDuration').value,'15');assert.equal(node('videoDurationRange').value,'15');
+  assert.equal(node('videoDuration').value,'30');assert.equal(node('videoDurationRange').value,'30');
   vm.runInContext("state.videoApiType='openai';state.assets=Array.from({length:10},(_,i)=>({id:'a'+i,kind:'image',name:'图'+i,dataUrl:'data:image/png;base64,YQ=='}));confirmedIds=state.assets.map(item=>item.id);selectedImageIds=[];updateVideoMode()",context);
   assert.equal(node('videoFrameModeWrap').hidden,false);
   node('videoFrameMode').value='reference';
@@ -46,4 +47,18 @@ test('video choices are inline radios; duration slider and number stay synchroni
   assert.equal(vm.runInContext('selectedImageIds.length',context),2);
   assert.match(node('toast').textContent,/最多添加 2 张/);
   assert.match(node('videoPicker').innerHTML,/首帧/);assert.match(node('videoPicker').innerHTML,/尾帧/);
+  const labels=generationConfig.resolutions.map(value=>({value,box:{},closest(){return this.box;}}));
+  context.document.querySelectorAll=selector=>selector==='[data-video-option="videoResolution"]'?labels:[];
+  vm.runInContext("state.videoApiType='openai';state.generation={...generationConfig.defaults,VIDEO_RESOLUTIONS:'1080p,4k',VIDEO_MAX_SECONDS:'12',OPENAI_IMAGE_PRICE:'0.1',VIDEO_PRICE_1080P:'0.2',VIDEO_PRICE_4K:'0.5'};updateVideoMode()",context);
+  assert.equal(node('videoDuration').max,'12');assert.equal(node('videoDuration').value,'12');
+  assert.equal(labels[0].box.hidden,true);assert.equal(labels[1].box.hidden,true);assert.equal(labels[2].box.hidden,false);
+  assert.equal(node('videoResolution').value,'1080p');assert.match(node('videoSizeOptions').innerHTML,/1920x1080/);
+  node('imageCount').value='7';node('imageCount').handlers.input();assert.equal(node('imageEstimate').textContent,'预估费用：¥0.70');
+  assert.equal(node('videoEstimate').textContent,'预估费用：¥2.40');
+  node('videoOptions').handlers.change({target:{dataset:{videoOption:'videoResolution'},value:'4k'}});
+  assert.equal(node('videoEstimate').textContent,'预估费用：¥6.00');assert.match(node('videoSizeOptions').innerHTML,/3840x2160/);
+  node('videoDurationRange').value='5';node('videoDurationRange').handlers.input();assert.equal(node('videoEstimate').textContent,'预估费用：¥2.50');
+  vm.runInContext("state.generation.VIDEO_MIN_SECONDS='10';state.generation.VIDEO_MAX_SECONDS='30';updateVideoMode()",context);
+  assert.equal(node('videoDuration').min,'10');assert.equal(node('videoDurationRange').max,'30');
+  assert.equal(node('videoDuration').value,'10');assert.equal(node('videoEstimate').textContent,'预估费用：¥5.00');
 });

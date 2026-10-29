@@ -27,6 +27,13 @@ test('settings encrypt, persist, preserve blank keys and explicitly override env
     assert.equal(store.publicSettings().OPENAI_IMAGE_MAX_COUNT, '8');
     for (const value of ['0','11','1.5','', 'abc',7]) await assert.rejects(store.update({OPENAI_IMAGE_MAX_COUNT:value}), {status:400});
     await store.update({OPENAI_IMAGE_MAX_COUNT:'7'});
+    for (const value of ['-1','NaN','Infinity','0.00001','1000001']) await assert.rejects(store.update({OPENAI_IMAGE_PRICE:value}), {status:400});
+    for (const value of ['','720p,720p','8k']) await assert.rejects(store.update({VIDEO_RESOLUTIONS:value}), {status:400});
+    for (const value of ['0','31','2.5']) await assert.rejects(store.update({VIDEO_MAX_SECONDS:value}), {status:400});
+    for (const value of ['0','31','2.5']) await assert.rejects(store.update({VIDEO_MIN_SECONDS:value}), {status:400});
+    await assert.rejects(store.update({VIDEO_MIN_SECONDS:'20',VIDEO_MAX_SECONDS:'10'}), {status:400});
+    await store.update({VIDEO_MIN_SECONDS:'5'});
+    await store.update({OPENAI_IMAGE_PRICE:'0.1234',VIDEO_PRICE_1080P:'0.15',VIDEO_RESOLUTIONS:'720p,1080p',VIDEO_MAX_SECONDS:'12'});
     assert.equal(store.current().OPENAI_BASE_URL, 'https://new.every-ai.cc/v1');
     assert.equal(store.current().SEEDANCE_BASE_URL, 'https://new.every-ai.cc/v1');
     assert.equal(store.current().SEEDANCE_MODEL, 'doubao-seedance-2-0-mini-260615');
@@ -44,6 +51,9 @@ test('settings encrypt, persist, preserve blank keys and explicitly override env
     assert.ok(!disk.includes(Buffer.from('saved-test-key')));
     store = await createSettingsStore(dir, env);
     assert.equal(store.current().OPENAI_IMAGE_MAX_COUNT, '7');
+    assert.equal(store.current().OPENAI_IMAGE_PRICE, '0.1234');assert.equal(store.current().VIDEO_PRICE_1080P, '0.15');
+    assert.equal(store.current().VIDEO_RESOLUTIONS, '720p,1080p');assert.equal(store.current().VIDEO_MAX_SECONDS, '12');
+    assert.equal(store.current().VIDEO_MIN_SECONDS, '5');
     assert.equal(store.current().OPENAI_API_KEY, 'saved-test-key');
     await Promise.all([store.update({ OPENAI_API_KEY: '', OPENAI_IMAGE_MODEL: 'image-custom' }), store.update({ SEEDANCE_MODEL: 'video-custom' })]);
     assert.equal(store.current().OPENAI_API_KEY, 'saved-test-key');

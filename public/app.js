@@ -2,13 +2,14 @@ import { projectVideos } from './video-confirmation.js';
 import { setStableMarkup, renderVideoCards } from './stable-render.js';
 import { imageRatios } from './image-sizes.js';
 import { bindSettings } from './settings.js';
+import * as generationConfig from './generation-config.js';
 
 const $ = selector => document.querySelector(selector);
 const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[char]));
 const media = id => state.assets.find(item => item.id === id) || state.results.find(item => item.id === id);
 const mime = item => item?.dataUrl?.match(/^data:([^;,]+)/)?.[1] || item?.mime || ({ image:'image/png', video:'video/mp4', audio:'audio/mpeg' }[item?.kind] || '');
 const sourceUrl = value => /^(?:https?:\/\/|data:(?:image|video|audio)\/|\/api\/(?:video-results|media)\/)/i.test(value || '') ? value : '';
-const state = { projects:[], shots:[], assets:[], results:[], tasks:[], models:{}, providers:{}, videoApiType:'openai', imageMaxCount:8 };
+const state = { projects:[], shots:[], assets:[], results:[], tasks:[], models:{}, providers:{}, videoApiType:'openai', imageMaxCount:8, generation:generationConfig.defaults };
 let projectId = null;
 let routeReady = false, navigationVersion = 0;
 const videoDrafts = new Map();
@@ -132,7 +133,7 @@ function reuseGeneration(id) {
     imageReferenceIds=restored;imageSize=params.size||'864x1536';$('#imageCount').value=String(params.n??1);renderImageRatios();
   }else{
     selectedImageIds=restored;confirmedIds=[...new Set([...confirmedIds,...restored])];
-    const values={videoDuration:params.duration??(state.videoApiType==='openai'?8:6),videoRatio:params.ratio||'9:16',videoSize:params.videoSize||'720x1280',videoResolution:params.resolution||'720p',videoFrameMode:frames?'frames':'reference',videoExternalImage:''};
+    const values={videoDuration:params.duration??(state.videoApiType==='openai'?8:6),videoRatio:params.ratio||'9:16',videoSize:params.videoSize||'720x1280',videoResolution:params.resolution||generationConfig.resolutionForSize(params.videoSize)||'720p',videoFrameMode:frames?'frames':'reference',videoExternalImage:''};
     for(const [field,value] of Object.entries(values))$('#'+field).value=String(value);
     for(const option of document.querySelectorAll('[data-video-option]'))option.checked=option.value===$('#'+option.dataset.videoOption).value;
     updateVideoMode();syncVideoDuration('number',true);
@@ -280,6 +281,7 @@ $('#imagePreviewDialog').addEventListener('click',event=>{if(event.target===$('#
 function renderPrep() {
   const count=$('#imageCount');count.max=String(state.imageMaxCount);
   if(Number(count.value)>state.imageMaxCount)count.value=String(state.imageMaxCount);
+  updateEstimates();
   const records=prepImages();prepIds=records.filter(item=>!item.deletedAt).map(item=>item.id);
   imageReferenceIds=imageReferenceIds.filter(id=>prepIds.includes(id));
   const shotIds=new Set(state.shots.filter(shot=>shot.projectId===projectId).map(shot=>shot.id));
@@ -328,8 +330,9 @@ function removePrepImage(id) {
 function rememberImageDraft(){if(projectId)imageDrafts.set(projectId,{prompt:$('#imagePrompt').value,size:imageSize,n:Number($('#imageCount').value),refs:[...imageReferenceIds]});}
 function loadImageDraft(){const draft=imageDrafts.get(projectId);$('#imagePrompt').value=draft?.prompt||'';imageSize=draft?.size||'864x1536';$('#imageCount').value=String(draft?.n??1);imageReferenceIds=draft?.refs||[];$('#imageError').hidden=true;renderImageRatios();}
 $('#clearImageSelection').addEventListener('click',()=>{imageReferenceIds=[];renderPrep();});
-$('#decreaseImageCount').addEventListener('click',()=>$('#imageCount').stepDown());
-$('#increaseImageCount').addEventListener('click',()=>$('#imageCount').stepUp());
+$('#decreaseImageCount').addEventListener('click',()=>{$('#imageCount').stepDown();updateEstimates();});
+$('#increaseImageCount').addEventListener('click',()=>{$('#imageCount').stepUp();updateEstimates();});
+$('#imageCount').addEventListener('input',updateEstimates);
 $('#imageRatios').addEventListener('change',event=>{if(imageRatios.some(ratio=>ratio.size===event.target.value))imageSize=event.target.value;});
 $('#imageComposeForm').addEventListener('submit',event=>{event.preventDefault();void generateImage();});
 $('#restoreMaterialsButton').addEventListener('click',()=>{if(currentProject()?.canvas){currentProject().canvas.hiddenNodeIds=[];renderPrep();saveProjectMaterials().catch(error=>showToast(error.message));}});
@@ -410,7 +413,7 @@ async function downloadVideo(id) {
 function renderTasks() {
   const tasks = state.tasks.filter(task => state.shots.some(shot => shot.projectId === projectId && shot.id === task.shotId));
   $('#runningCount').textContent = String(tasks.filter(task => ['queued','running'].includes(task.status)).length);
-  setStableMarkup($('#taskList'), tasks.length ? tasks.map(task => `<article class="task-item"><div><b>${task.kind === 'image' ? '图片生成' : '视频生成'}</b><span class="task-status ${task.status}">${taskLabels[task.status] || esc(task.status)}</span></div><p>${esc(task.prompt)}</p><small>${new Date(task.createdAt).toLocaleString('zh-CN')} · ${esc(task.model || '')}</small>${task.error ? `<p class="error-message">${esc(task.error)}</p>` : ''}${task.remoteTaskId ? `<small>上游任务：${esc(task.remoteTaskId)}</small>` : ''}</article>`).join('') : '<p class="drawer-empty">当前项目还没有任务。</p>');
+  setStableMarkup($('#taskList'), tasks.length ? tasks.map(task => `<article class="task-item"><div><b>${task.kind === 'image' ? '图片生成' : '视频生成'}</b><span class="task-status ${task.status}">${taskLabels[task.status] || esc(task.status)}</span></div><p>${esc(task.prompt)}</p><small>${new Date(task.createdAt).toLocaleString('zh-CN')} · ${esc(task.model || '')}</small>${task.estimatedCost != null ? `<small>预估费用：¥${generationConfig.formatPrice(task.estimatedCost)}</small>` : ''}${task.error ? `<p class="error-message">${esc(task.error)}</p>` : ''}${task.remoteTaskId ? `<small>上游任务：${esc(task.remoteTaskId)}</small>` : ''}</article>`).join('') : '<p class="drawer-empty">当前项目还没有任务。</p>');
 }
 function render() {
   if(previewImageId&&(!media(previewImageId)||media(previewImageId).deletedAt))$('#imagePreviewDialog').close();
@@ -455,15 +458,22 @@ function scheduleRefresh() {
   clearTimeout(refreshTimer);
   refreshTimer=setTimeout(()=>refresh().catch(error=>{showToast('任务状态刷新失败：'+error.message);scheduleRefresh();}),state.tasks.some(task=>['queued','running'].includes(task.status))?2500:60000);
 }
-let durationApiType;
+let durationBounds;
+function updateEstimates() {
+  for (const [kind, params, target] of [['image',{n:Number($('#imageCount').value)},'#imageEstimate'],['video',{duration:Number($('#videoDuration').value),resolution:$('#videoResolution').value},'#videoEstimate']]) {
+    const amount = generationConfig.estimate(kind, params, state.generation);
+    $(target).textContent = amount === null ? '预估费用：—（未设置单价或数量无效）' : '预估费用：¥' + generationConfig.formatPrice(amount);
+  }
+}
 function syncVideoDuration(source, commit=false) {
   const number=$('#videoDuration'),slider=$('#videoDurationRange');
   const input=source==='slider'?slider:number;
   let value=Number(input.value),min=Number(number.min),max=Number(number.max);
-  if (!commit && (input.value==='' || !Number.isInteger(value) || value<min || value>max)) return;
+  if (!commit && (input.value==='' || !Number.isInteger(value) || value<min || value>max)) {updateEstimates();return;}
   if(input.value==='' || !Number.isFinite(value))value=Number(slider.value)||6;
   value=Math.max(min,Math.min(max,Math.round(value)));
   number.value=String(value);slider.value=String(value);
+  updateEstimates();
 }
 $('#videoDurationRange').addEventListener('input',()=>syncVideoDuration('slider'));
 $('#videoDuration').addEventListener('input',()=>syncVideoDuration('number'));
@@ -473,22 +483,37 @@ $('#videoOptions').addEventListener('change',event=>{
   if(!['videoRatio','videoSize','videoResolution','videoFrameMode'].includes(field))return;
   $('#'+field).value=event.target.value;
   if(field==='videoFrameMode')renderVideo();
+  if(field==='videoResolution')updateVideoMode();
+  updateEstimates();
 });
 function updateVideoMode() {
   const type = state.videoApiType || 'openai';
   const kyy = type === 'kyyReactApi';
   $('#videoRatioWrap').hidden = type === 'openai';
   $('#videoSizeWrap').hidden = type !== 'openai';
-  $('#videoResolutionWrap').hidden = !kyy;
+  $('#videoResolutionWrap').hidden = false;
   $('#videoFrameModeWrap').hidden = !kyy && type !== 'openai';
-  $('#videoDuration').min = kyy ? '4' : '1';
-  $('#videoDuration').max = kyy ? '15' : '60';
+  const limits = generationConfig.videoLimits(state.generation);
+  const resolution=$('#videoResolution');
+  if(!limits.resolutions.includes(resolution.value))resolution.value=limits.resolutions.includes('720p')?'720p':limits.resolutions[0];
+  for(const input of document.querySelectorAll('[data-video-option="videoResolution"]')){
+    input.closest('label').hidden=!limits.resolutions.includes(input.value);input.disabled=!limits.resolutions.includes(input.value);input.checked=input.value===resolution.value;
+  }
+  if(type==='openai'){
+    const sizes=generationConfig.videoSizes(resolution.value),current=$('#videoSize').value;
+    if(!sizes.includes(current)){const [w,h]=current.split('x').map(Number);$('#videoSize').value=sizes[w>h?1:0];}
+    setStableMarkup($('#videoSizeOptions'),sizes.map(size=>'<label class="video-option"><input type="radio" name="videoSizeChoice" data-video-option="videoSize" value="'+size+'" '+(size===$('#videoSize').value?'checked':'')+'/><span>'+size+'</span></label>').join(''));
+  }
+  $('#videoDuration').min = String(limits.min);
+  $('#videoDuration').max = String(limits.max);
   $('#videoDurationRange').min = $('#videoDuration').min;
   $('#videoDurationRange').max = $('#videoDuration').max;
   $('#durationMin').textContent = $('#videoDuration').min+' 秒';
   $('#durationMax').textContent = $('#videoDuration').max+' 秒';
-  if(durationApiType!==type){durationApiType=type;syncVideoDuration('number',true);}
+  const bounds=type+':'+limits.min+':'+limits.max;
+  if(durationBounds!==bounds){durationBounds=bounds;syncVideoDuration('number',true);}
   $('#videoModelLabel').textContent = state.models.seedance || '视频模型未设置';
+  updateEstimates();
 }
 async function setProject(id,fromHistory=false) {
   const version=++navigationVersion;
@@ -593,7 +618,7 @@ async function generateVideo() {
   const records = selectedImageIds.filter(id => confirmedIds.includes(id)).map(media).filter(Boolean); if (!records.length) return showToast('请先从素材确认区选择视频素材');
   const type = state.videoApiType || 'openai'; const external = $('#videoExternalImage').value.trim();
   if (['kyyReactApi','openai'].includes(type) && $('#videoFrameMode').value === 'reference' && records.length > 9) return showToast('最多选择 9 张参考图片');
-  const params = { duration:Number($('#videoDuration').value), ...(type === 'openai' ? { videoSize:$('#videoSize').value } : { ratio:$('#videoRatio').value }), ...(type === 'kyyReactApi' ? { resolution:$('#videoResolution').value } : {}) };
+  const params = { duration:Number($('#videoDuration').value), resolution:$('#videoResolution').value, ...(type === 'openai' ? { videoSize:$('#videoSize').value } : { ratio:$('#videoRatio').value }) };
   let body = { kind:'video', prompt, params, inputImageUrl:external || null };
   if (['kyyReactApi','openai'].includes(type)) {
     if ($('#videoFrameMode').value === 'frames') { if (records.length > 2 || !records.length) return showToast('首尾帧模式请选择 1 或 2 张图片'); body.videoMedia = external ? {} : { firstImageId:records[0].id, lastImageId:records[1]?.id || '' }; if(external){body.params.firstImage=external;body.inputImageUrl=null;} }

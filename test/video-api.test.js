@@ -28,7 +28,7 @@ test('video defaults use OpenAI, reject unknown types and use protocol-specific 
   assert.throws(() => validateSettings({ VIDEO_API_TYPE: 'guess' }, defaults), { status: 400 });
   assert.throws(() => videoRequest('test', png, {}, { ...config, VIDEO_API_TYPE: 'kyyReactApi' }), /公网可访问 URL/);
   assert.throws(() => videoRequest('test', 'assetId://abc', {}, { ...config, VIDEO_API_TYPE: 'openai' }), /仅适用于/);
-  assert.throws(() => videoRequest('test', null, { duration: 3 }, { ...config, VIDEO_API_TYPE: 'kyyReactApi' }), /4–15/);
+  assert.throws(() => videoRequest('test', null, { duration: 31 }, { ...config, VIDEO_API_TYPE: 'kyyReactApi' }), /1–30/);
   assert.throws(() => videoRequest('test', 'javascript:alert(1)', {}, config), /地址/);
   const request = videoRequest('test', png, { size: '1024x1536' }, { ...config, VIDEO_API_TYPE: 'openai' });
   assert.deepEqual(request.body.input_reference, { image_url: png });

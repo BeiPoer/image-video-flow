@@ -1,4 +1,5 @@
 import { setTimeout as sleep } from 'node:timers/promises';
+import * as generationConfig from './public/generation-config.js';
 
 export const videoApiTypes = ['volcengine', 'openai', 'kyyReactApi'];
 function invalid(message) { throw Object.assign(new Error(message), { status: 400 }); }
@@ -25,8 +26,11 @@ export function videoRequest(prompt, image, params = {}, config) {
   const type = config.VIDEO_API_TYPE || 'openai';
   if (!videoApiTypes.includes(type)) invalid('不支持的视频接口类型');
   if (typeof prompt !== 'string' || !prompt.trim()) invalid('请填写视频提示词');
-  const duration = Number(params.duration ?? (type === 'openai' ? 8 : 6));
-  if (!Number.isInteger(duration) || duration < 1 || duration > 60) invalid('视频时长必须为 1–60 之间的整数');
+  const limits = generationConfig.videoLimits(config);
+  const duration = Number(params.duration ?? Math.max(limits.min, Math.min(limits.max, type === 'openai' ? 8 : 6)));
+  if (!Number.isInteger(duration) || duration < limits.min || duration > limits.max) invalid(`视频时长必须为 ${limits.min}–${limits.max} 之间的整数`);
+  const resolution = params.resolution || generationConfig.resolutionForSize(params.videoSize) || (limits.resolutions.includes('720p') ? '720p' : limits.resolutions[0]);
+  if (!limits.resolutions.includes(resolution)) invalid('该分辨率未在模型设置中启用');
   const ratio = params.ratio || '9:16';
   if (!['16:9', '9:16', '1:1', '4:3', '3:4', '21:9', 'adaptive'].includes(ratio)) invalid('不支持的视频画幅比例');
   function checkImage(image) {
@@ -44,8 +48,9 @@ export function videoRequest(prompt, image, params = {}, config) {
   if (image) checkImage(image);
   const body = { model: config.SEEDANCE_MODEL, prompt: prompt.trim() };
   if (type === 'openai') {
-    const size = params.videoSize || ({ '9:16': '720x1280', '16:9': '1280x720' })[ratio];
+    const size = params.videoSize || ({ '9:16': generationConfig.videoSizes(resolution)[0], '16:9': generationConfig.videoSizes(resolution)[1] })[ratio];
     if (!size || !/^\d{3,4}x\d{3,4}$/.test(size)) invalid('OpenAI Video 需要明确的视频尺寸，例如 720x1280');
+    if (generationConfig.resolutionForSize(size) !== resolution) invalid('视频尺寸与所选分辨率不匹配');
     const lists=[params.referenceImages??[],params.referenceVideos??[],params.referenceAudios??[]];
     if (!lists.every(Array.isArray)) invalid('参考素材必须是列表');
     if (lists[0].length>9||lists[1].length>3||lists[2].length>3) invalid('参考素材数量超过接口限制（图片 9、视频 3、音频 3）');
@@ -66,9 +71,6 @@ export function videoRequest(prompt, image, params = {}, config) {
     return { type, path: '/videos', body: { ...body, seconds: String(duration), size, ...(image ? { input_reference: { image_url: image } } : {}) } };
   }
   if (type === 'kyyReactApi') {
-    if (duration < 4 || duration > 15) invalid('kyyReactApi Seedance 2.0 的时长范围是 4–15 秒');
-    const resolution = params.resolution || '720p';
-    if (!['720p', '1080p', '2k', '4k'].includes(resolution)) invalid('kyyReactApi 不支持该分辨率');
     const images=params.referenceImages||[], videos=params.referenceVideos||[], audios=params.referenceAudios||[];
     if (![images,videos,audios].every(Array.isArray)) invalid('参考素材必须是列表');
     if (images.length>9||videos.length>3||audios.length>3) invalid('参考素材数量超过接口限制');
@@ -84,7 +86,7 @@ export function videoRequest(prompt, image, params = {}, config) {
   }
   const content = [{ type: 'text', text: prompt.trim() }];
   if (image) content.push({ type: 'image_url', image_url: { url: image }, role: 'reference_image' });
-  return { type, path: '/contents/generations/tasks', body: { model: body.model, content, ratio, duration, generate_audio: false } };
+  return { type, path: '/contents/generations/tasks', body: { model: body.model, content, ratio, resolution, duration, generate_audio: false } };
 }
 
 // Concrete adapters share only HTTP/polling. No provider plugin framework is needed for three protocols.
