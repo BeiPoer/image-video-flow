@@ -102,10 +102,54 @@ function preview(item) {
   if (item.kind === 'image' && src) return `<img src="${src}" alt="${esc(item.name)}" draggable="false" loading="lazy" />`;
   return '<div class="media-empty">无法预览</div>';
 }
+function reuseGenerationButton(item) {
+  if(!item.taskId&&!item.prompt)return '';
+  if(item.kind==='video')return '<button type="button" class="outline-button reuse-video" data-reuse-generation="'+esc(item.id)+'">回填提示词</button>';
+  return '<button type="button" class="reuse-generation" data-reuse-generation="'+esc(item.id)+'" aria-label="点击回填提示词"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M17 17 7 7M7 17V7h10"/></svg></button>';
+}
+function reuseGeneration(id) {
+  const result=state.results.find(item=>item.id===id);
+  if(!result||!['image','video'].includes(result.kind))return;
+  const task=state.tasks.find(item=>item.id===result.taskId);
+  const shot=state.shots.find(item=>item.id===(task?.shotId||result.shotId));
+  if(shot?.projectId!==projectId)return showToast('请在原项目中回填生成信息');
+  const params=task?.params||{},selections=params.videoMedia||params.kyyMedia||{};
+  const frames=Boolean(selections.firstImageId||selections.lastImageId);
+  const refs=result.kind==='image'?(task?.referenceImageIds||[]):frames?[selections.firstImageId,selections.lastImageId].filter(Boolean):selections.referenceImageIds||(task?.inputImageId?[task.inputImageId]:[]);
+  const missing=refs.flatMap((sourceId,index)=>{
+    const source=media(sourceId),sourceProject=source?.projectId||state.shots.find(item=>item.id===source?.shotId)?.projectId;
+    return !source||source.deletedAt||source.kind!=='image'||(sourceProject&&sourceProject!==projectId)?['图'+(index+1)+'（'+sourceId+'）']:[];
+  });
+  const warnings=[];
+  if(!task)warnings.push('原任务记录缺失，仅回填结果中保存的提示词。');
+  if(missing.length)warnings.push('参考素材已过期、不存在或不在当前项目：'+missing.join('、')+'。为避免编号错位，本次未回填参考图，请重新选择。');
+  const restored=missing.length?[]:[...refs];
+  const project=currentProject(),visible=new Set(restored.flatMap(sourceId=>[sourceId,media(sourceId)?.taskId]));
+  if(project?.canvas)project.canvas.hiddenNodeIds=(project.canvas.hiddenNodeIds||[]).filter(sourceId=>!visible.has(sourceId));
+  const input=$('#'+(result.kind==='image'?'imagePrompt':'videoPrompt'));
+  input.value=task?.prompt??result.prompt??'';
+  if(result.kind==='image'){
+    imageReferenceIds=restored;imageSize=params.size||'864x1536';renderImageRatios();
+  }else{
+    selectedImageIds=restored;confirmedIds=[...new Set([...confirmedIds,...restored])];
+    const values={videoDuration:params.duration??(state.videoApiType==='openai'?8:6),videoRatio:params.ratio||'9:16',videoSize:params.videoSize||'720x1280',videoResolution:params.resolution||'720p',videoFrameMode:frames?'frames':'reference',videoExternalImage:''};
+    for(const [field,value] of Object.entries(values))$('#'+field).value=String(value);
+    for(const option of document.querySelectorAll('[data-video-option]'))option.checked=option.value===$('#'+option.dataset.videoOption).value;
+    updateVideoMode();syncVideoDuration('number',true);
+    if(task?.videoApiType&&task.videoApiType!==state.videoApiType)warnings.push('当前视频接口与原任务不同，请确认素材模式和参数后再提交。');
+    if(selections.referenceVideoIds?.length||selections.referenceAudioIds?.length)warnings.push('原任务还使用了视频或音频参考素材，当前表单仅回填图片参考。');
+    if(task&&!refs.length)warnings.push('原任务没有可回填的图片素材索引；如使用外部素材，请重新填写地址。');
+  }
+  render();rememberWorkspaceDraft();
+  const error=$('#'+(result.kind==='image'?'imageError':'videoError'));error.hidden=!warnings.length;error.textContent=warnings.join('\n');
+  input.focus();input.scrollIntoView({block:'center',behavior:'smooth'});
+  showToast(warnings.length?'提示词已回填，请查看生成区的素材提示':'已回填提示词、参考素材和生成参数');
+  saveProjectMaterials().catch(error=>showToast('回填成功，但素材布局保存失败：'+error.message));
+}
 function imageCard(item) {
   if (item.deletedAt) return deletedImageCard(item,true);
   const selected=selectedImageIds.includes(item.id);
-  return '<article class="material-thumb image-card confirmed '+(selected?'video-selected':'')+'" data-image-id="'+esc(item.id)+'"><div class="material-thumb-picture"><button type="button" class="material-preview-button" draggable="true" data-drag-image="'+esc(item.id)+'" data-preview-image="'+esc(item.id)+'" aria-label="预览'+esc(item.name)+'">'+preview(item)+'</button><button type="button" class="material-remove" data-action="remove-confirm" aria-label="从确认区移除'+esc(item.name)+'" title="从确认区移除">×</button></div><span class="material-name" title="'+esc(item.name)+'">'+esc(item.name)+'</span><div class="material-thumb-actions"><button type="button" data-action="video-select">'+(selected?'✓ 视频已选':'用于视频')+'</button></div></article>';
+  return '<article class="material-thumb image-card confirmed '+(selected?'video-selected':'')+'" data-image-id="'+esc(item.id)+'"><div class="material-thumb-picture"><button type="button" class="material-preview-button" draggable="true" data-drag-image="'+esc(item.id)+'" data-preview-image="'+esc(item.id)+'" aria-label="预览'+esc(item.name)+'">'+preview(item)+'</button><button type="button" class="material-remove" data-action="remove-confirm" aria-label="从确认区移除'+esc(item.name)+'" title="从确认区移除">×</button>'+reuseGenerationButton(item)+'</div><span class="material-name" title="'+esc(item.name)+'">'+esc(item.name)+'</span><div class="material-thumb-actions"><button type="button" data-action="video-select">'+(selected?'✓ 视频已选':'用于视频')+'</button></div></article>';
 }
 function prepImages() {
   const shots = new Set(state.shots.filter(shot=>shot.projectId===projectId).map(shot=>shot.id));
@@ -120,14 +164,14 @@ function prepThumbnail(item) {
     return `<article class="material-thumb image-task-placeholder" data-image-task-id="${esc(task.id)}" aria-label="${task.status==='queued'?'图片排队中':'图片生成中'}"><div class="image-task-preview"><span class="image-task-spinner" aria-hidden="true"></span><strong>${task.status==='queued'?'排队中':'生成中'}</strong></div><p class="image-task-prompt" title="${esc(task.prompt)}">${esc(task.prompt)}</p><time>${esc(new Date(task.createdAt).toLocaleString('zh-CN',{hour:'2-digit',minute:'2-digit',second:'2-digit'}))} 提交</time></article>`;
   }
   const selected=imageReferenceIds.includes(item.id),confirmed=confirmedIds.includes(item.id);
-  return '<article class="material-thumb '+(selected?'reference-selected':'')+'" data-image-id="'+esc(item.id)+'"><div class="material-thumb-picture"><button type="button" class="material-preview-button" draggable="true" data-drag-image="'+esc(item.id)+'" data-preview-image="'+esc(item.id)+'" aria-label="预览'+esc(item.name)+'" title="点击预览，拖入参考图区">'+preview(item)+'</button><button type="button" class="material-remove" data-action="remove-prep" aria-label="移除'+esc(item.name)+'" title="从工作区移除，原始图片保留">×</button></div><span class="material-name" title="'+esc(item.name)+'">'+esc(item.name)+'</span><div class="material-thumb-actions"><button type="button" data-action="use-image" '+(selected?'disabled':'')+'>'+(selected?'已添加参考':'添加参考')+'</button><button type="button" data-action="'+(confirmed?'remove-confirm':'confirm')+'">'+(confirmed?'✓ 已确认':'加入确认区')+'</button></div></article>';
+  return '<article class="material-thumb '+(selected?'reference-selected':'')+'" data-image-id="'+esc(item.id)+'"><div class="material-thumb-picture"><button type="button" class="material-preview-button" draggable="true" data-drag-image="'+esc(item.id)+'" data-preview-image="'+esc(item.id)+'" aria-label="预览'+esc(item.name)+'" title="点击预览，拖入参考图区">'+preview(item)+'</button><button type="button" class="material-remove" data-action="remove-prep" aria-label="移除'+esc(item.name)+'" title="从工作区移除，原始图片保留">×</button>'+reuseGenerationButton(item)+'</div><span class="material-name" title="'+esc(item.name)+'">'+esc(item.name)+'</span><div class="material-thumb-actions"><button type="button" data-action="use-image" '+(selected?'disabled':'')+'>'+(selected?'已添加参考':'添加参考')+'</button><button type="button" data-action="'+(confirmed?'remove-confirm':'confirm')+'">'+(confirmed?'✓ 已确认':'加入确认区')+'</button></div></article>';
 }
 function referenceThumbnail(id,index,video=false) {
   const item=media(id),label='图'+(index+1)+(video&&['kyyReactApi','openai'].includes(state.videoApiType)&&$('#videoFrameMode').value==='frames'?(index===0?' · 首帧':' · 尾帧'):'');
   return '<article class="reference-image"><button type="button" data-preview-image="'+esc(id)+'" aria-label="预览'+(video?'视频':'')+'参考'+label+'：'+esc(item.name)+'">'+preview(item)+'</button><span class="reference-number">'+label+'</span><button type="button" class="material-remove" '+(video?'data-remove-video-reference':'data-remove-reference')+'="'+esc(id)+'" aria-label="取消'+(video?'视频':'')+'引用'+esc(item.name)+'" title="只取消本次引用，不移除素材">×</button><small>'+esc(item.name)+'</small></article>';
 }
 function deletedImageCard(item,confirmed=false) {
-  return '<article class="material-thumb" data-image-id="'+esc(item.id)+'"><div class="material-thumb-picture">'+preview(item)+'<button type="button" class="material-remove" data-action="'+(confirmed?'remove-confirm':'remove-prep')+'" aria-label="移除占位'+esc(item.name)+'">×</button></div><span class="material-name">'+esc(item.name)+'</span><small>资源已删除，不可作为参考图</small></article>';
+  return '<article class="material-thumb" data-image-id="'+esc(item.id)+'"><div class="material-thumb-picture">'+preview(item)+'<button type="button" class="material-remove" data-action="'+(confirmed?'remove-confirm':'remove-prep')+'" aria-label="移除占位'+esc(item.name)+'">×</button>'+reuseGenerationButton(item)+'</div><span class="material-name">'+esc(item.name)+'</span><small>资源已删除，不可作为参考图</small></article>';
 }
 function renderImageReferences() {
   setStableMarkup($('#imageReferenceTray'),imageReferenceIds.length?imageReferenceIds.map((id,index)=>referenceThumbnail(id,index)).join(''):'<div class="reference-drop-empty"><span>＋</span><b>将上方素材拖到这里作为参考图</b><small>也可直接拖入本地图片，或使用素材下方的“添加参考”</small></div>');
@@ -318,7 +362,7 @@ function renderVideoResults() {
     const progressHint=task.upstreamStatus==='saving'?'正在保存视频…':progress===100?'生成完成，正在准备视频…':'可继续创作，完成后自动显示';
     const frame=done?preview(result):'<div class="video-pending-art"><span class="video-pending-icon" aria-hidden="true">▷</span><span class="video-pending-spinner" aria-hidden="true"></span><strong>'+title+'</strong><div class="video-progress"><progress max="100" '+(progress===null?'':'value="'+progress+'" ')+'aria-label="视频生成进度"></progress><span>'+progressLabel+'</span></div><small>'+progressHint+'</small></div>';
     const details=[task.params?.duration?task.params.duration+' 秒':'',task.params?.ratio||task.params?.videoSize||'',task.params?.resolution||''].filter(Boolean).join(' · ');
-    return [{id:task.id,html:'<div class="video-result-frame" aria-label="'+esc(title)+'">'+frame+'</div><div class="video-result-info"><div class="video-result-heading"><b title="'+esc(title)+'">'+esc(title)+'</b><span class="video-state '+(done?'done':'working')+'">'+(done?(result.deletedAt?'已删除':'已完成'):'处理中')+'</span></div><p class="video-result-prompt" title="'+esc(task.prompt)+'">'+esc(task.prompt)+'</p><div class="video-result-meta"><span>'+esc(details)+'</span><time>'+esc(new Date(task.createdAt).toLocaleString('zh-CN',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'}))+'</time></div></div>'+'<div class="video-card-actions">'+(done&&!result.deletedAt&&projectVideos(state,projectId).some(item=>item.id===result.id)?'<button type="button" class="outline-button" data-confirm-video="'+esc(result.id)+'">＋ 加入确认区</button>':'<small>'+(result?.deletedAt?'资源已删除':'完成后自动加入视频确认区')+'</small>')+'</div>'}];
+    return [{id:task.id,html:'<div class="video-result-frame" aria-label="'+esc(title)+'">'+frame+'</div><div class="video-result-info"><div class="video-result-heading"><b title="'+esc(title)+'">'+esc(title)+'</b><span class="video-state '+(done?'done':'working')+'">'+(done?(result.deletedAt?'已删除':'已完成'):'处理中')+'</span></div><p class="video-result-prompt" title="'+esc(task.prompt)+'">'+esc(task.prompt)+'</p><div class="video-result-meta"><span>'+esc(details)+'</span><time>'+esc(new Date(task.createdAt).toLocaleString('zh-CN',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'}))+'</time></div></div>'+'<div class="video-card-actions">'+(done?reuseGenerationButton(result):'')+(done&&!result.deletedAt&&projectVideos(state,projectId).some(item=>item.id===result.id)?'<button type="button" class="outline-button" data-confirm-video="'+esc(result.id)+'">＋ 加入确认区</button>':'<small>'+(result?.deletedAt?'资源已删除':'完成后自动加入视频确认区')+'</small>')+'</div>'}];
   });
   renderVideoCards($('#videoResults'),cards);
   renderConfirmedVideos();
@@ -328,7 +372,7 @@ function renderConfirmedVideos() {
   const results=projectVideos(state,projectId).filter(result=>result.videoConfirmed!==false);
   $('#confirmedVideoCount').textContent=results.length+' 个';
   $('#confirmedVideosEmpty').hidden=results.length>0;
-  renderVideoCards($('#confirmedVideos'),results.map(result=>({id:result.id,html:'<div class="video-result-frame">'+preview(result)+'</div><div class="confirmed-video-info"><b>'+esc(result.name)+'</b><p title="'+esc(result.prompt||'')+'">'+esc(result.prompt||'')+'</p></div><div class="video-card-actions"><button type="button" class="primary-button" data-download-video="'+esc(result.id)+'" '+(result.deletedAt?'disabled':'')+'>↓ 下载视频</button><button type="button" class="outline-button" data-unconfirm-video="'+esc(result.id)+'">移除</button></div>'})));
+  renderVideoCards($('#confirmedVideos'),results.map(result=>({id:result.id,html:'<div class="video-result-frame">'+preview(result)+'</div><div class="confirmed-video-info"><b>'+esc(result.name)+'</b><p title="'+esc(result.prompt||'')+'">'+esc(result.prompt||'')+'</p></div><div class="video-card-actions">'+reuseGenerationButton(result)+'<button type="button" class="primary-button" data-download-video="'+esc(result.id)+'" '+(result.deletedAt?'disabled':'')+'>↓ 下载视频</button><button type="button" class="outline-button" data-unconfirm-video="'+esc(result.id)+'">移除</button></div>'})));
 }
 async function confirmVideo(id,confirmed) {
   if(videoConfirmationWrites.has(id))return;
@@ -494,6 +538,7 @@ function addConfirmed(id) { if(media(id)?.deletedAt)return showToast('资源已�
 function removeConfirmed(id) { confirmedIds = confirmedIds.filter(value => value !== id); selectedImageIds = selectedImageIds.filter(value => value !== id); render(); saveProjectMaterials().catch(error => showToast('确认素材未保存：' + error.message)); }
 $('#saveStatus').addEventListener('click', () => saveProjectMaterials().catch(error => showToast(error.message)));
 document.body.addEventListener('click', async event => {
+  const reuse=event.target.closest('[data-reuse-generation]');if(reuse){reuseGeneration(reuse.dataset.reuseGeneration);return;}
   const addVideo=event.target.closest('[data-confirm-video]');if(addVideo){await confirmVideo(addVideo.dataset.confirmVideo,true);return;}
   const removeVideo=event.target.closest('[data-unconfirm-video]');if(removeVideo){await confirmVideo(removeVideo.dataset.unconfirmVideo,false);return;}
   const download=event.target.closest('[data-download-video]');if(download){await downloadVideo(download.dataset.downloadVideo);return;}
