@@ -123,15 +123,105 @@ function prepThumbnail(item) {
   return '<article class="material-thumb '+(selected?'reference-selected':'')+'" data-image-id="'+esc(item.id)+'"><div class="material-thumb-picture"><button type="button" class="material-preview-button" draggable="true" data-drag-image="'+esc(item.id)+'" data-preview-image="'+esc(item.id)+'" aria-label="预览'+esc(item.name)+'" title="点击预览，拖入参考图区">'+preview(item)+'</button><button type="button" class="material-remove" data-action="remove-prep" aria-label="移除'+esc(item.name)+'" title="从工作区移除，原始图片保留">×</button></div><span class="material-name" title="'+esc(item.name)+'">'+esc(item.name)+'</span><div class="material-thumb-actions"><button type="button" data-action="use-image" '+(selected?'disabled':'')+'>'+(selected?'已添加参考':'添加参考')+'</button><button type="button" data-action="'+(confirmed?'remove-confirm':'confirm')+'">'+(confirmed?'✓ 已确认':'加入确认区')+'</button></div></article>';
 }
 function referenceThumbnail(id,index,video=false) {
-  const item=media(id),label=video&&['kyyReactApi','openai'].includes(state.videoApiType)&&$('#videoFrameMode').value==='frames'?(index===0?'首帧':'尾帧'):String(index+1);
-  return '<article class="reference-image"><button type="button" data-preview-image="'+esc(id)+'" aria-label="预览'+(video?'视频':'')+'参考图'+label+'：'+esc(item.name)+'">'+preview(item)+'</button><span class="reference-number">'+label+'</span><button type="button" class="material-remove" '+(video?'data-remove-video-reference':'data-remove-reference')+'="'+esc(id)+'" aria-label="取消'+(video?'视频':'')+'引用'+esc(item.name)+'" title="只取消本次引用，不移除素材">×</button><small>'+esc(item.name)+'</small></article>';
+  const item=media(id),label='图'+(index+1)+(video&&['kyyReactApi','openai'].includes(state.videoApiType)&&$('#videoFrameMode').value==='frames'?(index===0?' · 首帧':' · 尾帧'):'');
+  return '<article class="reference-image"><button type="button" data-preview-image="'+esc(id)+'" aria-label="预览'+(video?'视频':'')+'参考'+label+'：'+esc(item.name)+'">'+preview(item)+'</button><span class="reference-number">'+label+'</span><button type="button" class="material-remove" '+(video?'data-remove-video-reference':'data-remove-reference')+'="'+esc(id)+'" aria-label="取消'+(video?'视频':'')+'引用'+esc(item.name)+'" title="只取消本次引用，不移除素材">×</button><small>'+esc(item.name)+'</small></article>';
 }
 function deletedImageCard(item,confirmed=false) {
   return '<article class="material-thumb" data-image-id="'+esc(item.id)+'"><div class="material-thumb-picture">'+preview(item)+'<button type="button" class="material-remove" data-action="'+(confirmed?'remove-confirm':'remove-prep')+'" aria-label="移除占位'+esc(item.name)+'">×</button></div><span class="material-name">'+esc(item.name)+'</span><small>资源已删除，不可作为参考图</small></article>';
 }
 function renderImageReferences() {
   setStableMarkup($('#imageReferenceTray'),imageReferenceIds.length?imageReferenceIds.map((id,index)=>referenceThumbnail(id,index)).join(''):'<div class="reference-drop-empty"><span>＋</span><b>将上方素材拖到这里作为参考图</b><small>也可直接拖入本地图片，或使用素材下方的“添加参考”</small></div>');
+  imageMentions.refresh();
 }
+function bindPromptMentions(id,getReferences) {
+  const input=$('#'+id),menu=$('#'+id+'Mentions'),highlight=$('#'+id+'Highlight');
+  const textStyles=['fontFamily','fontSize','fontWeight','fontStyle','lineHeight','letterSpacing','textIndent','textTransform','textAlign','direction','tabSize','paddingTop','paddingRight','paddingBottom','paddingLeft'];
+  let matches=[],active=0,range=null,composing=false;
+  let resizeObserver;
+  function highlightText() {
+    setStableMarkup(highlight,esc(input.value).replace(/(?<![\w@])@图([1-9]\d*)/g,'<span class="prompt-mention-token" data-reference="$1">$&</span>')+'\u200b');
+    if(!input.clientWidth)return;
+    const style=getComputedStyle(input);
+    for(const property of textStyles)highlight.style[property]=style[property];
+    Object.assign(highlight.style,{left:(input.offsetLeft+input.clientLeft)+'px',top:(input.offsetTop+input.clientTop)+'px',width:input.clientWidth+'px',height:input.clientHeight+'px'});
+    highlight.scrollTop=input.scrollTop;highlight.scrollLeft=input.scrollLeft;
+    if(!resizeObserver){resizeObserver=new ResizeObserver(()=>{highlightText();position();});resizeObserver.observe(input);}
+  }
+  function close() {
+    menu.hidden=true;range=null;
+    input.setAttribute('aria-expanded','false');input.removeAttribute('aria-activedescendant');
+  }
+  function position() {
+    if(menu.hidden)return;
+    const style=getComputedStyle(input),mirror=document.createElement('div'),caret=document.createElement('span');
+    // A textarea exposes no caret rectangle; mirror its text wrapping and subtract its scroll offset.
+    for(const property of textStyles)mirror.style[property]=style[property];
+    Object.assign(mirror.style,{position:'fixed',left:'0',top:'0',visibility:'hidden',pointerEvents:'none',boxSizing:'border-box',width:input.clientWidth+'px',whiteSpace:'pre-wrap',overflowWrap:'break-word'});
+    mirror.textContent=input.value.slice(0,input.selectionStart);
+    caret.textContent=input.value.slice(input.selectionStart)||'\u200b';mirror.append(caret);document.body.append(mirror);
+    const rect=caret.getClientRects()[0],origin=mirror.getBoundingClientRect();
+    const x=input.offsetLeft+input.clientLeft+rect.left-origin.left-input.scrollLeft;
+    const y=input.offsetTop+input.clientTop+rect.top-origin.top-input.scrollTop;
+    menu.style.left=Math.max(0,Math.min(x,input.parentElement.clientWidth-menu.offsetWidth))+'px';
+    menu.style.top=(y+rect.height+4)+'px';
+    mirror.remove();
+  }
+  function refresh() {
+    if(document.activeElement!==input)return;
+    if(composing||input.selectionStart!==input.selectionEnd)return close();
+    const before=input.value.slice(0,input.selectionStart);
+    const match=/@([^\s@，。！？、；：…（）()\[\]{}]*)$/.exec(before);
+    if(!match||/[\w@]/.test(before[match.index-1]||''))return close();
+    const query=match[1].toLocaleLowerCase();
+    const references=getReferences();
+    // shortcut: @图N follows the current order; use ID-backed tokens if mentions must survive reference removal/reordering.
+    matches=references.map((item,index)=>({...item,number:index+1,label:'图'+(index+1)})).filter(item=>item.label.includes(query)||item.name.toLocaleLowerCase().includes(query));
+    range={start:match.index,end:input.selectionStart};active=Math.min(active,Math.max(0,matches.length-1));
+    const empty=references.length?'没有匹配的参考图，试试编号或素材名':'请先在上方参考图区添加图片';
+    setStableMarkup(menu,matches.length?matches.map((item,index)=>'<div id="'+id+'Mention'+index+'" class="mention-option" data-reference="'+item.number+'" role="option" aria-selected="'+(index===active)+'" data-mention-index="'+index+'">'+item.label+'</div>').join(''):'<div class="mention-empty" role="status">'+empty+'</div>');
+    menu.hidden=false;input.setAttribute('aria-expanded','true');
+    if(matches.length)input.setAttribute('aria-activedescendant',id+'Mention'+active);else input.removeAttribute('aria-activedescendant');
+    position();
+  }
+  function select(index) {
+    const item=matches[index];if(!item||!range)return;
+    const token='@'+item.label;
+    const suffix=input.value.slice(range.end);
+    const text=token+(/^\s/.test(suffix)?'':' ');
+    if(input.value.length-(range.end-range.start)+text.length>input.maxLength){showToast('提示词已达到长度上限，请删减后再引用');return;}
+    input.setRangeText(text,range.start,range.end,'end');
+    input.dispatchEvent(new Event('input',{bubbles:true}));close();input.focus();
+  }
+  input.addEventListener('input',()=>{highlightText();active=0;refresh();});
+  input.addEventListener('click',refresh);
+  input.addEventListener('focus',refresh);
+  input.addEventListener('blur',close);
+  input.addEventListener('scroll',()=>{highlightText();position();});
+  window.addEventListener('resize',()=>{highlightText();position();});
+  input.addEventListener('compositionstart',()=>{composing=true;close();});
+  input.addEventListener('compositionend',()=>{composing=false;refresh();});
+  input.addEventListener('keyup',event=>{if(['ArrowLeft','ArrowRight','Home','End'].includes(event.key))refresh();});
+  input.addEventListener('keydown',event=>{
+    if(composing||event.isComposing||event.keyCode===229||menu.hidden)return;
+    if(event.key==='Escape'){event.preventDefault();close();return;}
+    if(!matches.length)return;
+    if(['ArrowDown','ArrowUp'].includes(event.key)){
+      event.preventDefault();active=(active+(event.key==='ArrowDown'?1:-1)+matches.length)%matches.length;refresh();
+      $('#'+id+'Mention'+active).scrollIntoView({block:'nearest'});
+    }else if(event.key==='Enter'||(event.key==='Tab'&&!event.shiftKey)){event.preventDefault();select(active);}
+  });
+  menu.addEventListener('pointerdown',event=>event.preventDefault());
+  menu.addEventListener('click',event=>{
+    const option=event.target.closest('[data-mention-index]');if(option)select(Number(option.dataset.mentionIndex));
+  });
+  return {refresh(){highlightText();if(!menu.hidden)refresh();}};
+}
+const imageMentions=bindPromptMentions('imagePrompt',()=>imageReferenceIds.map(media).filter(item=>item&&!item.deletedAt));
+const videoMentions=bindPromptMentions('videoPrompt',()=>{
+  const external=$('#videoExternalImage').value.trim();
+  if(external)return [{name:'外部参考图'}];
+  return selectedImageIds.map(media).filter(item=>item&&!item.deletedAt);
+});
 function openImagePreview(id) {
   const item=media(id);if(!item||item.kind!=='image'||!displaySource(item))return;
   previewImageId=id;
@@ -204,6 +294,7 @@ function renderVideo() {
   selectedImageIds=selectedImageIds.filter(id=>confirmedIds.includes(id)&&media(id)&&!media(id).deletedAt);
   const selected = selectedImageIds.map(media);
   setStableMarkup($('#videoPicker'),selected.length?selectedImageIds.map((id,index)=>referenceThumbnail(id,index,true)).join(''):'<div class="reference-drop-empty"><span>＋</span><b>将素材确认区的图片拖到这里</b><small>也可点击确认素材下方的“用于视频”；点击图片可预览大图</small></div>');
+  videoMentions.refresh();
   $('#videoReferenceCount').textContent=selected.length?'已添加 '+selected.length+' 张参考图':'尚未添加参考图';
   $('#clearVideoReferences').disabled=!selected.length;
   $('#videoSelectionHint').textContent = selected.length ? `已选 ${selected.length} 个素材：${selected.map(item => item.name).join('、')}` : '尚未选择视频素材';
