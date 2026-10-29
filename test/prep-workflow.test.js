@@ -24,6 +24,7 @@ test('two material rows support zero/multiple references, preserve drafts during
   assert.match(node('uploadedMaterials').innerHTML,/上传图/);assert.doesNotMatch(node('uploadedMaterials').innerHTML,/生成图/);
   assert.match(node('generatedMaterials').innerHTML,/生成图/);assert.doesNotMatch(node('generatedMaterials').innerHTML,/其他项目图片/);
   node('imagePrompt').value='不选图，创建新场景';await vm.runInContext('generateImage()',context);
+  assert.equal(node('imagePrompt').value,'不选图，创建新场景','image submission must preserve the prompt');
   assert.deepEqual(calls.find(c=>c.path==='/api/tasks').body.referenceImageIds,[]);
   vm.runInContext("addImageReference('a1');addImageReference('r1');chooseImage('a1');",context);
   node('imagePrompt').value='融合上传图和生成图';node('imageRatios').handlers.change({target:{value:'1536x864'}});
@@ -81,6 +82,7 @@ test('two material rows support zero/multiple references, preserve drafts during
   assert.match(node('videoPicker').innerHTML,/首帧/);assert.match(node('videoPicker').innerHTML,/尾帧/);
   node('videoPrompt').value='首尾帧过渡';node('videoDuration').value='6';node('videoRatio').value='9:16';node('videoResolution').value='720p';
   await vm.runInContext('generateVideo()',context);const videoBody=calls.filter(c=>c.path==='/api/tasks').at(-1).body;
+  assert.equal(node('videoPrompt').value,'首尾帧过渡','video submission must preserve the prompt');
   assert.equal(videoBody.videoMedia.firstImageId,'r1');assert.equal(videoBody.videoMedia.lastImageId,'a1');
   node('clearVideoReferences').handlers.click();assert.equal(vm.runInContext('selectedImageIds.length',context),0);
   assert.equal(vm.runInContext('confirmedIds.length',context),2);

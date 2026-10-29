@@ -444,7 +444,6 @@ async function generateImage() {
 async function generateVideo() {
   if (submittingVideo || uploadCount) return showToast('请等待素材导入完成');
   syncVideoDuration('number',true);
-  const targetProject=projectId;
   const prompt = $('#videoPrompt').value.trim(); if (!prompt) return showToast('请填写视频提示词');
   if(selectedImageIds.some(id=>media(id)?.deletedAt))return showToast('参考图片已删除，请重新选择');
   const records = selectedImageIds.filter(id => confirmedIds.includes(id)).map(media).filter(Boolean); if (!records.length) return showToast('请先从素材确认区选择视频素材');
@@ -457,7 +456,7 @@ async function generateVideo() {
     else body.videoMedia = { referenceImageIds:external ? [] : records.map(item => item.id), referenceVideoIds:[], referenceAudioIds:[] };
   } else { if (records.length > 1) return showToast('当前接口只支持一张参考图片'); body.inputImageId = external ? null : records[0].id; }
   submittingVideo = true; $('#generateVideoButton').disabled = true; $('#generateVideoButton').textContent = '正在提交…'; $('#videoError').hidden = true;
-  try { const shot = await createShot('video', prompt); const task = await post('/api/tasks', { ...body, shotId:shot.id }); watchedVideoTaskIds.add(task.id); state.shots.unshift(shot); state.tasks.unshift(task); if(projectId===targetProject && $('#videoPrompt').value.trim()===prompt)$('#videoPrompt').value = ''; await refresh(); showToast('视频任务已提交，结果会出现在下方'); }
+  try { const shot = await createShot('video', prompt); const task = await post('/api/tasks', { ...body, shotId:shot.id }); watchedVideoTaskIds.add(task.id); state.shots.unshift(shot); state.tasks.unshift(task); await refresh(); showToast('视频任务已提交，结果会出现在下方'); }
   catch (error) { $('#videoError').textContent = error.message; $('#videoError').hidden = false; } finally { submittingVideo = false; renderVideo(); $('#generateVideoButton').textContent = '▷ 提交视频任务'; }
 }
 async function uploadFiles(files, asReferences = false) {
