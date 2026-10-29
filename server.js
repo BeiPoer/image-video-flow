@@ -79,8 +79,8 @@ function sampleResult(kind, prompt) {
 function configured(provider, config = modelSettings.current()) {
   return provider === 'openai' ? Boolean(config.OPENAI_API_KEY) : Boolean(config.SEEDANCE_API_KEY);
 }
-async function openaiImage(prompt, size, config, references = []) {
-  const fields = { model: config.OPENAI_IMAGE_MODEL || 'gpt-image-2', prompt, size, quality: 'auto' };
+async function openaiImage(prompt, size, config, references = [], n = 1) {
+  const fields = { model: config.OPENAI_IMAGE_MODEL || 'gpt-image-2', prompt, size, n, quality: 'auto' };
   const headers = { authorization: `Bearer ${config.OPENAI_API_KEY}` };
   let body;
   if (references.length) {
@@ -92,11 +92,12 @@ async function openaiImage(prompt, size, config, references = []) {
   let payload;
   try { payload = await response.json(); } catch { throw new Error(`图片接口未返回 JSON（HTTP ${response.status}），请检查服务商是否支持${references.length ? '参考图生图 /images/edits' : '图片生成'}`); }
   if (!response.ok) throw new Error((references.length ? '参考图生图失败：' : '') + (payload?.error?.message || `OpenAI 请求失败 (${response.status})`));
-  const item = payload?.data?.[0];
-  if (!item) throw new Error('OpenAI 没有返回图片结果');
-  if (item.b64_json) return `data:image/png;base64,${item.b64_json}`;
-  if (item.url) return item.url;
-  throw new Error('OpenAI 返回中没有可用图片');
+  if (!Array.isArray(payload?.data) || !payload.data.length) throw new Error('OpenAI 没有返回图片结果');
+  return payload.data.map(item => {
+    if (item?.b64_json) return `data:image/png;base64,${item.b64_json}`;
+    if (item?.url) return item.url;
+    throw new Error('OpenAI 返回中没有可用图片');
+  });
 }
 async function storeVideo(response, taskId) {
   const directory = join(dataDir, 'videos');
@@ -210,6 +211,7 @@ async function runTask(task, state, config = modelSettings.current()) {
   task.status = 'running'; task.startedAt = now(); await saveState(state);
   try {
     let dataUrl = sampleResult(task.kind, task.prompt);
+    let imageUrls = Array(task.kind === 'image' ? (task.params?.n ?? 1) : 1).fill(dataUrl);
     let provider = 'local-demo';
     if (task.kind === 'image' && configured('openai', config)) {
       const references = []; let totalBytes = 0;
@@ -219,7 +221,7 @@ async function runTask(task, state, config = modelSettings.current()) {
         if (totalBytes > 50 * 1024 * 1024) throw new Error('本次参考图片总大小不能超过 50 MB');
         references.push(image);
       }
-      dataUrl = await openaiImage(task.prompt, task.params?.size || '1024x1536', config, references); provider = 'openai';
+      imageUrls = await openaiImage(task.prompt, task.params?.size || '1024x1536', config, references, task.params?.n ?? 1); provider = 'openai';
     }
     if (task.kind === 'video' && configured('seedance', config)) {
       let videoParams = task.params;
@@ -249,12 +251,12 @@ async function runTask(task, state, config = modelSettings.current()) {
       provider = video.type;
     }
     await new Promise((resolve) => setTimeout(resolve, provider === 'local-demo' ? 650 : 0));
-    const result = { id: id('result'), shotId: task.shotId, taskId: task.id, kind: task.kind, status: 'completed', name: `${task.kind === 'image' ? '图片' : '视频'}结果 ${new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}`, dataUrl, provider, prompt: task.prompt, createdAt: now() };
-    state.results.push(result); await saveState(state);
-    if (task.kind === 'image' && provider !== 'local-demo') await syncCloudMedia(result, state);
+    const results = (task.kind === 'image' ? imageUrls : [dataUrl]).map((url, index, urls) => ({ id: id('result'), shotId: task.shotId, taskId: task.id, kind: task.kind, status: 'completed', name: `${task.kind === 'image' ? '图片' : '视频'}结果 ${new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}${urls.length > 1 ? ` · ${index + 1}` : ''}`, dataUrl: url, provider, prompt: task.prompt, createdAt: now() }));
+    state.results.push(...results); await saveState(state);
+    if (task.kind === 'image' && provider !== 'local-demo') for (const result of results) await syncCloudMedia(result, state);
     const shot = state.shots.find(item => item.id === task.shotId);
-    if (task.kind === 'image' && shot && shot.selectedImageId === task.previousImageId) shot.selectedImageId = result.id;
-    task.status = 'completed'; task.provider = provider; task.resultIds = [result.id]; task.completedAt = now(); await saveState(state);
+    if (task.kind === 'image' && shot && shot.selectedImageId === task.previousImageId) shot.selectedImageId = results[0].id;
+    task.status = 'completed'; task.provider = provider; task.resultIds = results.map(result => result.id); task.completedAt = now(); await saveState(state);
   } catch (err) { task.status = err.uncertain ? 'unknown' : 'failed'; task.error = [config.OPENAI_API_KEY, config.SEEDANCE_API_KEY].filter(Boolean).reduce((message, key) => message.split(key).join('[REDACTED]'), err.message); if (cosStorage.enabled) task.error = cosStorage.redactError(task.error); task.completedAt = now(); await saveState(state); }
 }
 function publicMedia(record) {
@@ -355,7 +357,7 @@ async function api(req, res, pathname, url) {
     }catch(err){if(res.headersSent)res.destroy();else error(res,err.message || '视频下载失败',err.status || 502);}
     return;
   }
-  if (req.method === 'GET' && pathname === '/api/bootstrap') return send(res, 200, { ...state, assets:state.assets.map(publicMedia), results:state.results.map(publicMedia), tasks:state.tasks.map(publicTask), providers: { openai: configured('openai') ? 'configured' : 'demo', seedance: configured('seedance') ? 'configured' : 'demo' }, models: { openai: modelSettings.current().OPENAI_IMAGE_MODEL, seedance: modelSettings.current().SEEDANCE_MODEL }, videoApiType: modelSettings.current().VIDEO_API_TYPE, publicAssetBaseUrl: modelSettings.current().PUBLIC_ASSET_BASE_URL, cloudMediaEnabled: cosStorage.enabled });
+  if (req.method === 'GET' && pathname === '/api/bootstrap') return send(res, 200, { ...state, assets:state.assets.map(publicMedia), results:state.results.map(publicMedia), tasks:state.tasks.map(publicTask), providers: { openai: configured('openai') ? 'configured' : 'demo', seedance: configured('seedance') ? 'configured' : 'demo' }, models: { openai: modelSettings.current().OPENAI_IMAGE_MODEL, seedance: modelSettings.current().SEEDANCE_MODEL }, imageMaxCount: Number(modelSettings.current().OPENAI_IMAGE_MAX_COUNT), videoApiType: modelSettings.current().VIDEO_API_TYPE, publicAssetBaseUrl: modelSettings.current().PUBLIC_ASSET_BASE_URL, cloudMediaEnabled: cosStorage.enabled });
   if (req.method === 'PATCH' && pathname.startsWith('/api/projects/')) {
     const project = state.projects.find(item => item.id === pathname.split('/').pop());
     if (!project) return error(res, '找不到画布', 404);
@@ -437,6 +439,7 @@ async function api(req, res, pathname, url) {
     }
     if (body.kind === 'image' && (body.prompt.length > 32000 || !imageSizes.includes(params.size || '1024x1536'))) return error(res, '图片提示词过长或尺寸不受支持', 400);
     if(typeof params!=='object'||Array.isArray(params))return error(res,'无效的生成参数',400);
+    if (body.kind === 'image' && params.n !== undefined && (!Number.isInteger(params.n) || params.n < 1 || params.n > Number(config.OPENAI_IMAGE_MAX_COUNT))) return error(res, `生成数量必须是 1～${config.OPENAI_IMAGE_MAX_COUNT} 的整数`, 400);
     const videoMedia=body.videoMedia ?? body.kyyMedia;
     if(body.videoMedia!==undefined&&body.kyyMedia!==undefined)return error(res,'不能同时提交两组视频素材',400);
     if(videoMedia!==undefined&&(body.kind!=='video'||!['openai','kyyReactApi'].includes(config.VIDEO_API_TYPE)))return error(res,'当前接口不支持多图或首尾帧素材',400);

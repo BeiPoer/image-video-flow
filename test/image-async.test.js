@@ -50,20 +50,33 @@ test('image placeholders survive fresh page state, do not block more submissions
   }
   const first=browser();await vm.runInContext('refresh()',first.ctx);
   const before=bootstrapCalls;
+  assert.equal(first.node('imageCount').max,'8');
+  first.node('imagePrompt').value='不能超过上限';first.node('imageCount').value='9';
+  await vm.runInContext('generateImage()',first.ctx);
+  assert.equal(seq,0);assert.match(first.node('imageError').textContent,/1～8/);
+  first.node('imageCount').value='7';
   for(const prompt of ['第一张','第二张']){
     first.node('imagePrompt').value=prompt;await vm.runInContext('generateImage()',first.ctx);
     assert.equal(first.node('generateImageButton').disabled,false);
   }
   assert.equal(bootstrapCalls,before,'acknowledgement must not wait for another full bootstrap refresh');
-  assert.equal((first.node('generatedMaterials').innerHTML.match(/data-image-task-id=/g)||[]).length,2);
+  assert.ok(data.tasks.filter(task=>task.id!=='foreign').every(task=>task.params.n===7));
+  assert.equal((first.node('generatedMaterials').innerHTML.match(/data-image-task-id=/g)||[]).length,14);
+  assert.equal((first.node('generatedMaterials').innerHTML.match(/data-image-task-id="task-1"/g)||[]).length,7);
+  assert.match(first.node('generatedCount').textContent,/14 张生成中/);
+  data.imageMaxCount=3;await vm.runInContext('refresh()',first.ctx);
+  assert.equal(first.node('imageCount').value,'3');assert.equal(first.node('imageCount').max,'3');
+  assert.equal((first.node('generatedMaterials').innerHTML.match(/data-image-task-id=/g)||[]).length,14,'lowering the limit must not change pending task counts');
   const fresh=browser();await vm.runInContext('refresh()',fresh.ctx);
-  assert.equal((fresh.node('generatedMaterials').innerHTML.match(/data-image-task-id=/g)||[]).length,2);
+  assert.equal((fresh.node('generatedMaterials').innerHTML.match(/data-image-task-id=/g)||[]).length,14);
   assert.doesNotMatch(fresh.node('generatedMaterials').innerHTML,/foreign|data-image-select/);
   const second=data.tasks.find(t=>t.id==='task-2');second.status='completed';
-  data.results.push({id:'r2',taskId:'task-2',shotId:second.shotId,kind:'image',name:'第二张结果',createdAt:'2026-10-25T01:05:00Z',dataUrl:'data:image/png;base64,aA=='});
+  data.results.push(...Array.from({length:7},(_,index)=>({id:index?'r2-'+index:'r2',taskId:'task-2',shotId:second.shotId,kind:'image',name:'第二批结果',createdAt:'2026-10-25T01:05:00Z',dataUrl:'data:image/png;base64,aA=='})));
   await vm.runInContext('refresh()',fresh.ctx);
   let html=fresh.node('generatedMaterials').innerHTML;
   assert.match(html,/data-image-id="r2"/);assert.doesNotMatch(html,/data-image-task-id="task-2"/);
+  assert.equal((html.match(/data-image-id=/g)||[]).length,7);
+  assert.equal((html.match(/data-image-task-id=/g)||[]).length,7);
   assert.ok(html.indexOf('data-image-id="r2"')<html.indexOf('data-image-task-id="task-1"'));
   const original=data.tasks.find(t=>t.id==='task-1');original.status='failed';original.error='测试失败';
   await vm.runInContext('refresh()',fresh.ctx);

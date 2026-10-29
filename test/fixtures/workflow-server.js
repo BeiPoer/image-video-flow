@@ -29,7 +29,7 @@ export async function startWorkflowServer(initialState) {
       if (req.url === '/v1/images/edits' && rejectEdits) { res.statusCode=400; return res.end(JSON.stringify({error:{message:'edits are unavailable'}})); }
       if (req.url.startsWith('/v1/images/')) {
         if(holdImages)await new Promise(resolve=>imageReleases.push(resolve));
-        return res.end(JSON.stringify({ data:[{b64_json:png}] }));
+        return res.end(JSON.stringify({ data:Array.from({length:Number(body.n ?? 1)},()=>({b64_json:png})) }));
       }
       if (req.url === '/v3/contents/generations/tasks') return res.end(JSON.stringify({id:'mock-video',status:'succeeded',content:{video_url:'https://example.test/video.mp4'}}));
       if (req.url === '/v1/videos') return res.end(JSON.stringify({id:'local-video',status:'completed'}));

@@ -7,6 +7,7 @@ export const defaults = {
   OPENAI_API_KEY: '',
   OPENAI_BASE_URL: 'https://new.every-ai.cc/v1',
   OPENAI_IMAGE_MODEL: 'gpt-image-2',
+  OPENAI_IMAGE_MAX_COUNT: '8',
   VIDEO_API_TYPE: 'openai',
   PUBLIC_ASSET_BASE_URL: '',
   SEEDANCE_API_KEY: '',
@@ -25,7 +26,10 @@ export function validateSettings(input, current) {
     if (!Object.hasOwn(input, field)) continue;
     if (typeof input[field] !== 'string' || input[field].length > 4096) invalid('配置值必须是长度不超过 4096 的文本');
     const value = input[field].trim();
-    if (field === 'VIDEO_API_TYPE') {
+    if (field === 'OPENAI_IMAGE_MAX_COUNT') {
+      if (!/^(?:[1-9]|10)$/.test(value)) invalid('生图上限必须是 1～10 的整数');
+      next[field] = value;
+    } else if (field === 'VIDEO_API_TYPE') {
       if (!videoApiTypes.includes(value)) invalid('接口类型必须是火山引擎、OpenAI Video 或 kyyReactApi');
       next[field] = value;
     } else if (secretFields.includes(field)) {

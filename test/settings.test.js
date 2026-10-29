@@ -24,6 +24,9 @@ test('settings encrypt, persist, preserve blank keys and explicitly override env
     assert.equal(store.publicSettings().OPENAI_API_KEY_CONFIGURED, true);
     assert.equal(store.current().OPENAI_API_KEY, 'env-test-key');
     assert.equal(store.publicSettings().VIDEO_API_TYPE, 'openai');
+    assert.equal(store.publicSettings().OPENAI_IMAGE_MAX_COUNT, '8');
+    for (const value of ['0','11','1.5','', 'abc',7]) await assert.rejects(store.update({OPENAI_IMAGE_MAX_COUNT:value}), {status:400});
+    await store.update({OPENAI_IMAGE_MAX_COUNT:'7'});
     assert.equal(store.current().OPENAI_BASE_URL, 'https://new.every-ai.cc/v1');
     assert.equal(store.current().SEEDANCE_BASE_URL, 'https://new.every-ai.cc/v1');
     assert.equal(store.current().SEEDANCE_MODEL, 'doubao-seedance-2-0-mini-260615');
@@ -40,6 +43,7 @@ test('settings encrypt, persist, preserve blank keys and explicitly override env
     const disk = await readFile(join(dir, 'settings.enc'));
     assert.ok(!disk.includes(Buffer.from('saved-test-key')));
     store = await createSettingsStore(dir, env);
+    assert.equal(store.current().OPENAI_IMAGE_MAX_COUNT, '7');
     assert.equal(store.current().OPENAI_API_KEY, 'saved-test-key');
     await Promise.all([store.update({ OPENAI_API_KEY: '', OPENAI_IMAGE_MODEL: 'image-custom' }), store.update({ SEEDANCE_MODEL: 'video-custom' })]);
     assert.equal(store.current().OPENAI_API_KEY, 'saved-test-key');

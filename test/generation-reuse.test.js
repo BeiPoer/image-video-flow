@@ -19,10 +19,10 @@ test('saved results refill prompts, ordered reference IDs and generation setting
     {id:'legacy',shotId:'s1',kind:'image',name:'旧结果',prompt:'旧结果提示词',createdAt},
     {id:'foreign',shotId:'s2',taskId:'foreign-task',kind:'image',createdAt},
   ],tasks:[
-    {id:'image-task',shotId:'s1',kind:'image',status:'completed',prompt:'将 @图1 放入 @图2',referenceImageIds:['a2','a1'],params:{size:'1536x864'},createdAt},
+    {id:'image-task',shotId:'s1',kind:'image',status:'completed',prompt:'将 @图1 放入 @图2',referenceImageIds:['a2','a1'],params:{size:'1536x864',n:10},createdAt},
     {id:'video-task',shotId:'s1',kind:'video',status:'completed',prompt:'从 @图1 过渡到 @图2',params:{duration:12,videoSize:'1280x720',videoMedia:{firstImageId:'a2',lastImageId:'a1'}},videoApiType:'openai',createdAt},
     {id:'foreign-task',shotId:'s2',kind:'image',prompt:'其他项目',referenceImageIds:['a1'],createdAt},
-  ],models:{},providers:{},videoApiType:'openai'};
+  ],models:{},providers:{},videoApiType:'openai',imageMaxCount:10};
   const context=vm.createContext({projectVideos,setStableMarkup,renderVideoCards,imageRatios,document,window:{location:{hash:'#/project/p1'},addEventListener(){}},console,structuredClone,setTimeout(){},clearTimeout(){},bindSettings(){},fetch:async(path,options)=>{
     const body=options?.body?JSON.parse(options.body):null;calls.push({path,body});
     if(path==='/api/projects/p1')data.projects[0].canvas=structuredClone(body.canvas);
@@ -43,6 +43,8 @@ test('saved results refill prompts, ordered reference IDs and generation setting
   node('imagePrompt').value='当前草稿';node('videoPrompt').value='视频草稿';
   await node('body').handlers.click({target:{closest:selector=>selector==='[data-reuse-generation]'?{dataset:{reuseGeneration:'image'}}:null}});await run('projectSaveQueue');
   assert.equal(node('imagePrompt').value,'将 @图1 放入 @图2');assert.equal(run('imageSize'),'1536x864');
+  assert.equal(node('imageCount').value,'10');
+  run('rememberImageDraft()');node('imageCount').value='1';run('loadImageDraft()');assert.equal(node('imageCount').value,'10');
   assert.equal(run('JSON.stringify(imageReferenceIds)'),'["a2","a1"]');assert.equal(node('videoPrompt').value,'视频草稿');
   assert.deepEqual(data.projects[0].canvas.hiddenNodeIds,[]);assert.match(node('imagePromptHighlight').innerHTML,/@图1/);
   await run('refresh()');assert.equal(run('JSON.stringify(imageReferenceIds)'),'["a2","a1"]','polling preserves restored references');
@@ -62,6 +64,7 @@ test('saved results refill prompts, ordered reference IDs and generation setting
   run("reuseGeneration('image')");await run('projectSaveQueue');
   assert.equal(node('imagePrompt').value,'将 @图1 放入 @图2');assert.equal(run('imageReferenceIds.length'),0,'missing earlier references must not renumber the remaining ones');assert.match(node('imageError').textContent,/图1（a2）/);
   run("reuseGeneration('legacy')");await run('projectSaveQueue');assert.equal(node('imagePrompt').value,'旧结果提示词');assert.match(node('imageError').textContent,/原任务记录缺失/);
+  assert.equal(node('imageCount').value,'1');
   run("reuseGeneration('foreign')");assert.equal(node('imagePrompt').value,'旧结果提示词');assert.match(node('toast').textContent,/原项目/);
   assert.equal(calls.some(call=>call.path==='/api/tasks'||call.path==='/api/shots'),false,'recall never generates or charges for another task');
 });

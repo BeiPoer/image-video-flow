@@ -8,7 +8,7 @@ const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&':'&am
 const media = id => state.assets.find(item => item.id === id) || state.results.find(item => item.id === id);
 const mime = item => item?.dataUrl?.match(/^data:([^;,]+)/)?.[1] || item?.mime || ({ image:'image/png', video:'video/mp4', audio:'audio/mpeg' }[item?.kind] || '');
 const sourceUrl = value => /^(?:https?:\/\/|data:(?:image|video|audio)\/|\/api\/(?:video-results|media)\/)/i.test(value || '') ? value : '';
-const state = { projects:[], shots:[], assets:[], results:[], tasks:[], models:{}, providers:{}, videoApiType:'openai' };
+const state = { projects:[], shots:[], assets:[], results:[], tasks:[], models:{}, providers:{}, videoApiType:'openai', imageMaxCount:8 };
 let projectId = null;
 let routeReady = false, navigationVersion = 0;
 const videoDrafts = new Map();
@@ -129,7 +129,7 @@ function reuseGeneration(id) {
   const input=$('#'+(result.kind==='image'?'imagePrompt':'videoPrompt'));
   input.value=task?.prompt??result.prompt??'';
   if(result.kind==='image'){
-    imageReferenceIds=restored;imageSize=params.size||'864x1536';renderImageRatios();
+    imageReferenceIds=restored;imageSize=params.size||'864x1536';$('#imageCount').value=String(params.n??1);renderImageRatios();
   }else{
     selectedImageIds=restored;confirmedIds=[...new Set([...confirmedIds,...restored])];
     const values={videoDuration:params.duration??(state.videoApiType==='openai'?8:6),videoRatio:params.ratio||'9:16',videoSize:params.videoSize||'720x1280',videoResolution:params.resolution||'720p',videoFrameMode:frames?'frames':'reference',videoExternalImage:''};
@@ -278,6 +278,8 @@ $('#imagePreviewDialog').addEventListener('close',()=>{previewImageId=null;$('#i
 $('#imagePreviewDialog').addEventListener('click',event=>{if(event.target===$('#imagePreviewDialog'))$('#imagePreviewDialog').close();});
 
 function renderPrep() {
+  const count=$('#imageCount');count.max=String(state.imageMaxCount);
+  if(Number(count.value)>state.imageMaxCount)count.value=String(state.imageMaxCount);
   const records=prepImages();prepIds=records.filter(item=>!item.deletedAt).map(item=>item.id);
   imageReferenceIds=imageReferenceIds.filter(id=>prepIds.includes(id));
   const shotIds=new Set(state.shots.filter(shot=>shot.projectId===projectId).map(shot=>shot.id));
@@ -286,7 +288,7 @@ function renderPrep() {
   const taskMap=new Map(tasks.map(task=>[task.id,task]));
   const hidden=new Set(currentProject()?.canvas?.hiddenNodeIds || []);
   const uploaded=records.filter(item=>!item.taskId&&item.source!=='generated');
-  const generated=[...records.filter(item=>(item.taskId||item.source==='generated')&&!['queued','running'].includes(taskMap.get(item.taskId)?.status)),...active.filter(task=>!hidden.has(task.id)).map(task=>({id:task.id,createdAt:task.createdAt,pendingTask:task}))];
+  const generated=[...records.filter(item=>(item.taskId||item.source==='generated')&&!['queued','running'].includes(taskMap.get(item.taskId)?.status)),...active.filter(task=>!hidden.has(task.id)).flatMap(task=>Array.from({length:task.params?.n??1},(_,index)=>({id:task.id+'-'+index,taskId:task.id,createdAt:task.createdAt,pendingTask:task})))];
   // Keep a task's place in the row when it becomes an image, even if tasks finish out of order.
   const orderTime=item=>taskMap.get(item.taskId)?.createdAt || item.createdAt || '';
   generated.sort((a,b)=>orderTime(b).localeCompare(orderTime(a)) || (b.taskId||b.id).localeCompare(a.taskId||a.id));
@@ -294,7 +296,7 @@ function renderPrep() {
     const html=list.length?list.map(prepThumbnail).join(''):'<div class="material-strip-empty">'+label+'</div>';
     setStableMarkup($('#'+id),html);
   }
-  $('#uploadedCount').textContent=uploaded.length;$('#generatedCount').textContent=active.length?`${generated.length} · ${active.length} 个生成中`:generated.length;
+  $('#uploadedCount').textContent=uploaded.length;$('#generatedCount').textContent=active.length?`${generated.length} · ${active.reduce((sum,task)=>sum+(task.params?.n??1),0)} 张生成中`:generated.length;
   $('#imageSelectionHint').textContent=imageReferenceIds.length?'已添加 '+imageReferenceIds.length+' / 8 张参考图：'+imageReferenceIds.map(id=>media(id)?.name).join('、'):'未添加参考图：按文字生成';
   renderImageReferences();
   $('#clearImageSelection').disabled=!imageReferenceIds.length;
@@ -323,9 +325,11 @@ function removePrepImage(id) {
   confirmedIds=confirmedIds.filter(value=>value!==id);selectedImageIds=selectedImageIds.filter(value=>value!==id);imageReferenceIds=imageReferenceIds.filter(value=>value!==id);
   render();saveProjectMaterials().catch(error=>showToast(error.message));
 }
-function rememberImageDraft(){if(projectId)imageDrafts.set(projectId,{prompt:$('#imagePrompt').value,size:imageSize,refs:[...imageReferenceIds]});}
-function loadImageDraft(){const draft=imageDrafts.get(projectId);$('#imagePrompt').value=draft?.prompt||'';imageSize=draft?.size||'864x1536';imageReferenceIds=draft?.refs||[];$('#imageError').hidden=true;renderImageRatios();}
+function rememberImageDraft(){if(projectId)imageDrafts.set(projectId,{prompt:$('#imagePrompt').value,size:imageSize,n:Number($('#imageCount').value),refs:[...imageReferenceIds]});}
+function loadImageDraft(){const draft=imageDrafts.get(projectId);$('#imagePrompt').value=draft?.prompt||'';imageSize=draft?.size||'864x1536';$('#imageCount').value=String(draft?.n??1);imageReferenceIds=draft?.refs||[];$('#imageError').hidden=true;renderImageRatios();}
 $('#clearImageSelection').addEventListener('click',()=>{imageReferenceIds=[];renderPrep();});
+$('#decreaseImageCount').addEventListener('click',()=>$('#imageCount').stepDown());
+$('#increaseImageCount').addEventListener('click',()=>$('#imageCount').stepUp());
 $('#imageRatios').addEventListener('change',event=>{if(imageRatios.some(ratio=>ratio.size===event.target.value))imageSize=event.target.value;});
 $('#imageComposeForm').addEventListener('submit',event=>{event.preventDefault();void generateImage();});
 $('#restoreMaterialsButton').addEventListener('click',()=>{if(currentProject()?.canvas){currentProject().canvas.hiddenNodeIds=[];renderPrep();saveProjectMaterials().catch(error=>showToast(error.message));}});
@@ -566,17 +570,18 @@ async function createShot(kind, prompt) {
 }
 async function generateImage() {
   if(submittingImage||uploadCount)return;
-  const prompt=$('#imagePrompt').value.trim(),refs=[...imageReferenceIds],size=imageSize;
+  const prompt=$('#imagePrompt').value.trim(),refs=[...imageReferenceIds],size=imageSize,n=Number($('#imageCount').value);
   $('#imageError').hidden=true;
+  if(!Number.isInteger(n)||n<1||n>state.imageMaxCount){$('#imageError').textContent='生成数量必须是 1～'+state.imageMaxCount+' 的整数';$('#imageError').hidden=false;return;}
   const invalid=!prompt?'请填写图片提示词':refs.some(id=>!prepIds.includes(id)||!media(id)||media(id).deletedAt)?'参考图片已不存在，请重新选择':refs.length>8?'参考生图最多选择 8 张图片':state.providers.openai==='configured'&&refs.some(id=>!imageMime.has(mime(media(id))))?'参考生图支持 PNG、JPEG、WebP':'';
   if(invalid){$('#imageError').textContent=invalid;$('#imageError').hidden=false;return;}
   submittingImage=true;renderPrep();let targetProject=projectId;
   try{
     targetProject ||= await ensureProject();
     const shot=await post('/api/shots',{projectId:targetProject,name:prompt.slice(0,32),imagePrompt:prompt});state.shots.unshift(shot);
-    const task=await post('/api/tasks',{shotId:shot.id,kind:'image',prompt,referenceImageIds:refs,params:{size}});state.tasks.unshift(task);watchedImageTaskIds.add(task.id);
+    const task=await post('/api/tasks',{shotId:shot.id,kind:'image',prompt,referenceImageIds:refs,params:{size,n}});state.tasks.unshift(task);watchedImageTaskIds.add(task.id);
     refreshVersion++;render();scheduleRefresh();
-    showToast('已在后台生成，可继续提交下一张');
+    showToast('已提交 '+n+' 张图片，可继续提交新任务');
   }catch(error){if(projectId===targetProject){$('#imageError').textContent=error.message;$('#imageError').hidden=false;}else showToast(error.message);}
   finally{submittingImage=false;renderPrep();}
 }

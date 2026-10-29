@@ -9,7 +9,7 @@ async function openSettings() {
     const values = await request('/api/settings');
     const form = $('#settingsForm'); form.reset();
     settingsToken = values.settingsToken;
-    for (const name of ['OPENAI_BASE_URL', 'OPENAI_IMAGE_MODEL', 'SEEDANCE_BASE_URL', 'SEEDANCE_MODEL', 'VIDEO_API_TYPE', 'PUBLIC_ASSET_BASE_URL']) form.elements[name].value = values[name];
+    for (const name of ['OPENAI_BASE_URL', 'OPENAI_IMAGE_MODEL', 'OPENAI_IMAGE_MAX_COUNT', 'SEEDANCE_BASE_URL', 'SEEDANCE_MODEL', 'VIDEO_API_TYPE', 'PUBLIC_ASSET_BASE_URL']) form.elements[name].value = values[name];
     lastVideoType = values.VIDEO_API_TYPE || 'openai';
     $('#publicAssetBaseField').hidden = !['kyyReactApi','openai'].includes(lastVideoType) || state.cloudMediaEnabled;
     $('#publicAssetHelp').hidden = !['kyyReactApi','openai'].includes(lastVideoType) || state.cloudMediaEnabled;
@@ -44,6 +44,7 @@ async function saveSettings(event) {
     const saved = await request('/api/settings', { method: 'PUT', headers: { 'content-type': 'application/json', 'x-settings-token': settingsToken }, body: JSON.stringify(values) });
     state.providers = { openai: saved.OPENAI_API_KEY_CONFIGURED ? 'configured' : 'demo', seedance: saved.SEEDANCE_API_KEY_CONFIGURED ? 'configured' : 'demo' };
     state.models = { openai: saved.OPENAI_IMAGE_MODEL, seedance: saved.SEEDANCE_MODEL };
+    state.imageMaxCount = Number(saved.OPENAI_IMAGE_MAX_COUNT);
     state.videoApiType = saved.VIDEO_API_TYPE;
     state.publicAssetBaseUrl = saved.PUBLIC_ASSET_BASE_URL;
     lastVideoType = saved.VIDEO_API_TYPE;
