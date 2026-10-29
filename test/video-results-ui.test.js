@@ -16,7 +16,7 @@ test('old video failures stay in history, current failures are separate dated al
     {id:'old',shotId:'s1',kind:'video',status:'failed',error:'旧 multipart 错误',createdAt},
     {id:'old-unknown',shotId:'s1',kind:'video',status:'unknown',error:'旧待核实',createdAt},
     {id:'success',shotId:'s1',kind:'video',status:'completed',prompt:'成功提示词',createdAt},
-    {id:'active',shotId:'s1',kind:'video',status:'running',prompt:'当前任务',createdAt},
+    {id:'active',shotId:'s1',kind:'video',status:'running',progress:42.7,prompt:'当前任务',createdAt},
     {id:'queue',shotId:'s1',kind:'video',status:'queued',prompt:'排队任务',createdAt},
   ],models:{},providers:{}};
   const context=vm.createContext({projectVideos,setStableMarkup,renderVideoCards,imageRatios,document:{body:node('body'),querySelector:selector=>node(selector.slice(1)),querySelectorAll:()=>[]},window:{location:{hash:'#/project/p1'},addEventListener(){}},console,structuredClone,setTimeout(){},clearTimeout(){},preprocessingGraph:()=>({nodes:[],edges:[]}),bindPrepCanvas:()=>({update(){}}),bindSettings(){},fetch:async()=>({ok:true,json:async()=>structuredClone(data)})});
@@ -25,11 +25,23 @@ test('old video failures stay in history, current failures are separate dated al
   assert.match(node('videoResults').innerHTML,/成功的视频/);
   assert.match(node('videoResults').innerHTML,/视频生成中/);
   assert.match(node('videoResults').innerHTML,/视频排队中/);
+  assert.match(node('videoResults').innerHTML,/value="42" aria-label="视频生成进度"/);
+  assert.match(node('videoResults').innerHTML,/>42%<\/span>/);
+  const progressTask=data.tasks.find(task=>task.id==='active');
+  for(const [value,expected] of [[67,67],[0,0],[100,100],[150,100],[-2,0],[NaN,null],[Infinity,null],['42',null],[null,null],[undefined,null]]){
+    progressTask.progress=value;await vm.runInContext('refresh()',context);
+    if(expected===null){assert.match(node('videoResults').innerHTML,/进度暂不可用/);assert.doesNotMatch(node('videoResults').innerHTML,/<progress[^>]*value=/);}
+    else {assert.match(node('videoResults').innerHTML,new RegExp('value="'+expected+'" aria-label="视频生成进度"'));assert.match(node('videoResults').innerHTML,new RegExp('>'+expected+'%<'));}
+    if(expected===100)assert.match(node('videoResults').innerHTML,/生成完成，正在准备视频/);
+  }
+  progressTask.progress=100;progressTask.upstreamStatus='saving';await vm.runInContext('refresh()',context);
+  assert.match(node('videoResults').innerHTML,/正在保存视频/);
   assert.equal(node('videoTaskAlerts').hidden,true);
   assert.match(node('taskList').innerHTML,/旧 multipart/);
   Object.assign(data.tasks.find(t=>t.id==='active'),{status:'failed',error:'当前错误 <script>',completedAt});
   await vm.runInContext('refresh()',context);
   assert.doesNotMatch(node('videoResults').innerHTML,/当前错误|生成失败/);
+  assert.doesNotMatch(node('videoResults').innerHTML,/100%|正在保存视频/);
   assert.match(node('videoTaskAlerts').innerHTML,/本次任务提醒/);
   assert.match(node('videoTaskAlerts').innerHTML,/当前错误 &lt;script&gt;/);
   assert.ok(node('videoTaskAlerts').innerHTML.includes(new Date(completedAt).toLocaleString('zh-CN')));

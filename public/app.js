@@ -313,7 +313,10 @@ function renderVideoResults() {
     const result=state.results.find(item=>item.taskId===task.id);
     if(task.status==='completed'&&!result)return [];
     const done=task.status==='completed',title=done?(result.name||'视频结果'):task.status==='queued'?'视频排队中':'视频生成中';
-    const frame=done?preview(result):'<div class="video-pending-art"><span class="video-pending-icon" aria-hidden="true">▷</span><span class="video-pending-spinner" aria-hidden="true"></span><strong>'+title+'</strong><small>可继续创作，完成后自动显示</small></div>';
+    const progress=Number.isFinite(task.progress)?Math.floor(Math.max(0,Math.min(100,task.progress))):null;
+    const progressLabel=progress===null?(task.status==='queued'?'排队中':'进度暂不可用'):progress+'%';
+    const progressHint=task.upstreamStatus==='saving'?'正在保存视频…':progress===100?'生成完成，正在准备视频…':'可继续创作，完成后自动显示';
+    const frame=done?preview(result):'<div class="video-pending-art"><span class="video-pending-icon" aria-hidden="true">▷</span><span class="video-pending-spinner" aria-hidden="true"></span><strong>'+title+'</strong><div class="video-progress"><progress max="100" '+(progress===null?'':'value="'+progress+'" ')+'aria-label="视频生成进度"></progress><span>'+progressLabel+'</span></div><small>'+progressHint+'</small></div>';
     const details=[task.params?.duration?task.params.duration+' 秒':'',task.params?.ratio||task.params?.videoSize||'',task.params?.resolution||''].filter(Boolean).join(' · ');
     return [{id:task.id,html:'<div class="video-result-frame" aria-label="'+esc(title)+'">'+frame+'</div><div class="video-result-info"><div class="video-result-heading"><b title="'+esc(title)+'">'+esc(title)+'</b><span class="video-state '+(done?'done':'working')+'">'+(done?(result.deletedAt?'已删除':'已完成'):'处理中')+'</span></div><p class="video-result-prompt" title="'+esc(task.prompt)+'">'+esc(task.prompt)+'</p><div class="video-result-meta"><span>'+esc(details)+'</span><time>'+esc(new Date(task.createdAt).toLocaleString('zh-CN',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'}))+'</time></div></div>'+'<div class="video-card-actions">'+(done&&!result.deletedAt&&projectVideos(state,projectId).some(item=>item.id===result.id)?'<button type="button" class="outline-button" data-confirm-video="'+esc(result.id)+'">＋ 加入确认区</button>':'<small>'+(result?.deletedAt?'资源已删除':'完成后自动加入视频确认区')+'</small>')+'</div>'}];
   });
