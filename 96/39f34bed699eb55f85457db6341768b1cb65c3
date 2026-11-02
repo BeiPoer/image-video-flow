@@ -1,0 +1,66 @@
+Dockerfile
+  s_fda99618de0fb7::t_8affb4adf1750a 3-4
+  s_fda99618de0fb7::t_b628eb1e2834e8 5
+  s_fda99618de0fb7::t_7d38834107b00a 8
+public/styles.css
+  s_fda99618de0fb7::t_2c0a7e67fc1cac 38
+media-retention.js
+  s_fda99618de0fb7::t_5349bc7e6896aa 56,65,70
+  s_fda99618de0fb7::t_b628eb1e2834e8 16-17,19-21
+test/media-previews.test.js
+  s_fda99618de0fb7::t_5349bc7e6896aa 7,67-68,70
+  s_fda99618de0fb7::t_e30fd36f0cb0ce 1-6,8-59,61,63-66,69,71-81,85-92
+  s_fda99618de0fb7::t_6e352ca5804937 60,62,82-84
+start.bat
+  s_fda99618de0fb7::t_44cab2d4f1d630 16-18
+public/app.js
+  s_fda99618de0fb7::t_8affb4adf1750a 11,101-104,107-117,582
+server.js
+  s_fda99618de0fb7::t_6224c31f606924 420
+  s_fda99618de0fb7::t_7d38834107b00a 21,296-297,308
+  s_fda99618de0fb7::t_5349bc7e6896aa 144,179,275
+  s_fda99618de0fb7::t_e7d1cd39a096f3 20,27,274,277,313-314
+test/media-previews-ui.test.js
+  s_fda99618de0fb7::t_5349bc7e6896aa 26-28
+  s_fda99618de0fb7::t_44cab2d4f1d630 1-25,29-39
+README.md
+  s_fda99618de0fb7::t_5349bc7e6896aa 21
+  s_fda99618de0fb7::t_b628eb1e2834e8 20,23-24
+  s_fda99618de0fb7::t_c49c5630ed6d5c 19
+  s_fda99618de0fb7::t_6e352ca5804937 22
+test/fixtures/workflow-server.js
+  s_fda99618de0fb7::t_e30fd36f0cb0ce 10,47
+media-previews.js
+  s_fda99618de0fb7::t_5349bc7e6896aa 27
+  s_fda99618de0fb7::t_b628eb1e2834e8 5,24,77-78
+  s_fda99618de0fb7::t_7d38834107b00a 7
+  s_fda99618de0fb7::t_e7d1cd39a096f3 1-4,6,8-23,25-26,28-76,79-105
+test/image-originals.test.js
+  s_fda99618de0fb7::t_6e352ca5804937 1-4,6,16
+  s_fda99618de0fb7::t_293ce66718946d 5,7-15,17-22
+test/project-home.test.js
+  s_fda99618de0fb7::t_44cab2d4f1d630 30-31
+image-originals.js
+  s_fda99618de0fb7::t_7d38834107b00a 1-3,7-10,12-14
+  s_fda99618de0fb7::t_5349bc7e6896aa 4-6,11
+package-lock.json
+  s_fda99618de0fb7::t_eb6ff6d1193b87 11-556,607-612,660-674,757-773,783-791,816-824,885-900,1033-1041,1057-1075,1151-1156,1178-1182,1189-1197,1241-1254,1287-1347,1445-1453,1481-1487,1506-1511,1531-1536
+package.json
+  s_fda99618de0fb7::t_18abb9bd296a94 13-15
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9639f34bed699eb55f85457db6341768b1cb65c3",
+  "prompts": {},
+  "sessions": {
+    "s_fda99618de0fb7": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a19c3b-7046-7e92-b0e8-a2c025360602",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "beipoer <forczc@foxmail.com>"
+    }
+  }
+}
