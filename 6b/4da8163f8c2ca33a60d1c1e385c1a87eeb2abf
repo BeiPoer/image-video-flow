@@ -1,0 +1,28 @@
+media-previews.js
+  s_fda99618de0fb7::t_a607197786626d 104-114
+test/fixtures/workflow-server.js
+  s_fda99618de0fb7::t_a607197786626d 10,32,38
+test/media-previews.test.js
+  s_fda99618de0fb7::t_6717c5b5314e97 11,52-65,77,104-136
+README.md
+  s_fda99618de0fb7::t_6717c5b5314e97 19
+server.js
+  s_fda99618de0fb7::t_a607197786626d 246
+  s_fda99618de0fb7::t_2c65db4827eb2f 421
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6b4da8163f8c2ca33a60d1c1e385c1a87eeb2abf",
+  "prompts": {},
+  "sessions": {
+    "s_fda99618de0fb7": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a19c3b-7046-7e92-b0e8-a2c025360602",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "beipoer <forczc@foxmail.com>"
+    }
+  }
+}
