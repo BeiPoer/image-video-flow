@@ -86,6 +86,32 @@ test('OpenAI-compatible video_url completes without fetching protected content u
   assert.equal(mock.calls.length, 1);
 });
 
+test('resuming all video protocols skips paid submission, reference validation and asset uploads', async () => {
+  for (const [type, path, value] of [
+    ['openai', '/videos', { status: 'completed', video_url: 'https://example.com/resumed.mp4' }],
+    ['volcengine', '/contents/generations/tasks', { status: 'succeeded', content: { video_url: 'https://example.com/resumed.mp4' } }],
+    ['kyyReactApi', '/v2/model-center/tasks', { status: 'completed', result_url: 'https://example.com/resumed.mp4' }],
+  ]) {
+    const mock = mockCalls([{ path: path + '/existing%2Fid', value }]);
+    const result = await generateVideo('', 'expired reference', { duration: -1 }, { ...config, VIDEO_API_TYPE: type }, undefined, { ...mock.options, remoteTaskId: 'existing/id' });
+    assert.equal(result.url, 'https://example.com/resumed.mp4'); assert.equal(mock.calls.length, 1);
+    assert.equal(result.remoteId, 'existing/id');
+  }
+  const mock = mockCalls([
+    { path: '/videos/existing', value: { status: 'completed' } },
+    { path: '/videos/existing/content', response: new Response('resumed mp4', { headers: { 'content-type': 'video/mp4' } }) },
+  ]);
+  const result = await generateVideo('', null, {}, { ...config, VIDEO_API_TYPE: 'openai' }, undefined, { ...mock.options, remoteTaskId: 'existing' });
+  assert.equal(await result.response.text(), 'resumed mp4');
+  const missing = mockCalls([{ path: '/videos/missing', status: 404, value: {} }]);
+  await assert.rejects(generateVideo('', null, {}, { ...config, VIDEO_API_TYPE: 'openai' }, undefined, { ...missing.options, remoteTaskId: 'missing' }), { uncertain: true });
+  for (const remoteTaskId of ['', null, 123]) {
+    const invalid = mockCalls([]);
+    await assert.rejects(generateVideo('', null, {}, config, undefined, { ...invalid.options, remoteTaskId }), /无效的上游任务 ID/);
+    assert.equal(invalid.calls.length, 0);
+  }
+});
+
 test('OpenAI-compatible Seedance sends all nine references and ordered frame roles through metadata.content',()=>{
   const cfg={...config,VIDEO_API_TYPE:'openai'};
   const images=Array.from({length:9},(_,index)=>'https://example.test/'+index+'.png');

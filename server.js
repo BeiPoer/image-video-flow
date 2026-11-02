@@ -4,7 +4,7 @@ import { projectVideos } from './public/video-confirmation.js';
 import { videoFile, downloadName } from './video-download.js';
 import { createServer } from 'node:http';
 import { execFile } from 'node:child_process';
-import { readFile, writeFile, mkdir, stat, rename, rm } from 'node:fs/promises';
+import { readFile, mkdir, stat, rename, rm } from 'node:fs/promises';
 import { existsSync, createReadStream, createWriteStream } from 'node:fs';
 import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -17,11 +17,13 @@ import { createCosStore } from './cos-storage.js';
 import { downloadImage } from './image-source.js';
 import { createAccessControl } from './access-control.js';
 import { expireResources, mediaExpired, requireMedia, retentionMs } from './media-retention.js';
+import { createStateStore } from './state-store.js';
 
 const root = dirname(fileURLToPath(import.meta.url));
 const publicDir = join(root, 'public');
 const dataDir = resolve(process.env.AI_FLOW_DATA_DIR || join(root, 'data'));
-const statePath = join(dataDir, 'state.json');
+const stateStore = createStateStore(dataDir);
+const { read: readState, save: saveState } = stateStore;
 const access = await createAccessControl(dataDir);
 const modelSettings = await createSettingsStore(dataDir);
 const cosStorage = await createCosStore(dataDir);
@@ -32,25 +34,6 @@ const mimeTypes = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; char
 
 function id(prefix) { return `${prefix}-${crypto.randomUUID()}`; }
 function now() { return new Date().toISOString(); }
-async function ensureState() {
-  await mkdir(dataDir, { recursive: true });
-  if (!existsSync(statePath)) await writeFile(statePath, JSON.stringify({ projects: [], assets: [], shots: [], tasks: [], results: [] }, null, 2));
-}
-let stateReady;
-let stateWrites = Promise.resolve();
-// ponytail: one process owns this JSON store; use a database before adding multiple workers.
-async function readState() {
-  return stateReady ||= readFile(statePath, 'utf8').then(text => JSON.parse(text));
-}
-function saveState(state) {
-  const snapshot = JSON.stringify(state, null, 2);
-  const write = stateWrites.then(async () => {
-    await writeFile(statePath + '.tmp', snapshot);
-    await rename(statePath + '.tmp', statePath);
-  });
-  stateWrites = write.catch(() => {});
-  return write;
-}
 async function jsonBody(req, limit = 12_000_000) {
   let body = '';
   for await (const chunk of req) { body += chunk; if (Buffer.byteLength(body) > limit) throw Object.assign(new Error('请求体过大'), { status: 413 }); }
@@ -59,7 +42,7 @@ async function jsonBody(req, limit = 12_000_000) {
 function send(res, status, payload) { res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }); res.end(JSON.stringify(payload)); }
 let retentionPending;
 function cleanExpiredMedia(scanFiles = false) {
-  return retentionPending ||= readState().then(state=>expireResources(state,dataDir,saveState,Date.now(),scanFiles)).then(errors=>{for(const err of errors)console.error('过期文件删除失败，将重试：',err.message);}).finally(()=>{retentionPending=undefined;});
+  return retentionPending ||= readState().then(state=>expireResources(state,dataDir,saveState,Date.now(),scanFiles)).then(async errors=>{if(scanFiles)errors.push(...await stateStore.prune());for(const err of errors)console.error('过期文件删除失败，将重试：',err.message);}).finally(()=>{retentionPending=undefined;});
 }
 async function cleanExpiredCloud() {
   if (!cosStorage.enabled) return;
@@ -209,8 +192,8 @@ async function cloudReferenceUrl(record, sourceId) {
   }
 }
 async function runTask(task, state, config = modelSettings.current()) {
-  task.status = 'running'; task.startedAt = now(); await saveState(state);
   try {
+    task.status = 'running'; task.startedAt ||= now(); delete task.error; delete task.completedAt; await saveState(state);
     let dataUrl = sampleResult(task.kind, task.prompt);
     let imageUrls = Array(task.kind === 'image' ? (task.params?.n ?? 1) : 1).fill(dataUrl);
     let provider = 'local-demo';
@@ -232,7 +215,7 @@ async function runTask(task, state, config = modelSettings.current()) {
         if(task.videoApiType==='openai'&&isLocalMedia(record))return config.PUBLIC_ASSET_BASE_URL+'/api/media/'+encodeURIComponent(sourceId);
         return record.dataUrl;
       };
-      if (['kyyReactApi','openai'].includes(task.videoApiType) && (task.params.videoMedia || task.params.kyyMedia)) {
+      if (!task.remoteTaskId && ['kyyReactApi','openai'].includes(task.videoApiType) && (task.params.videoMedia || task.params.kyyMedia)) {
         const selections=task.params.videoMedia || task.params.kyyMedia; videoParams={...task.params}; delete videoParams.videoMedia; delete videoParams.kyyMedia;
         for(const [source,target] of [['referenceImageIds','referenceImages'],['referenceVideoIds','referenceVideos'],['referenceAudioIds','referenceAudios']]){
           const ids=selections[source]||[];
@@ -241,12 +224,12 @@ async function runTask(task, state, config = modelSettings.current()) {
         }
         for(const [source,target] of [['firstImageId','firstImage'],['lastImageId','lastImage']])if(selections[source])videoParams[target]=await reference(selections[source]);
       }
-      const inputImageUrl = task.inputImageId
+      const inputImageUrl = task.remoteTaskId ? undefined : task.inputImageId
         ? await reference(task.inputImageId)
         : task.inputImageUrl;
       const video = await generateVideo(task.prompt, inputImageUrl, videoParams, config, async update => {
         Object.assign(task, update); await saveState(state);
-      });
+      }, { remoteTaskId: task.remoteTaskId });
       if (video.response) { task.upstreamStatus = 'saving'; await saveState(state); }
       dataUrl = video.url || await storeVideo(video.response, task.id);
       provider = video.type;
@@ -258,7 +241,32 @@ async function runTask(task, state, config = modelSettings.current()) {
     const shot = state.shots.find(item => item.id === task.shotId);
     if (task.kind === 'image' && shot && shot.selectedImageId === task.previousImageId) shot.selectedImageId = results[0].id;
     task.status = 'completed'; task.provider = provider; task.resultIds = results.map(result => result.id); task.completedAt = now(); await saveState(state);
-  } catch (err) { task.status = err.uncertain ? 'unknown' : 'failed'; task.error = [config.OPENAI_API_KEY, config.SEEDANCE_API_KEY].filter(Boolean).reduce((message, key) => message.split(key).join('[REDACTED]'), err.message); if (cosStorage.enabled) task.error = cosStorage.redactError(task.error); task.completedAt = now(); await saveState(state); }
+  } catch (err) { task.status = err.uncertain || ['completed','succeeded','saving'].includes(task.upstreamStatus) ? 'unknown' : 'failed'; task.error = [config.OPENAI_API_KEY, config.SEEDANCE_API_KEY].filter(Boolean).reduce((message, key) => message.split(key).join('[REDACTED]'), err.message); if (cosStorage.enabled) task.error = cosStorage.redactError(task.error); task.completedAt = now(); await saveState(state); }
+}
+function startTask(task, state, config) {
+  void runTask(task, state, config).catch(err => {
+    task.status = 'unknown'; task.error = '任务状态保存失败，请检查服务器数据目录；请先核实上游状态，避免重复提交计费'; task.completedAt = now();
+    console.error('任务状态持久化失败：', task.id, err.code || err.name);
+  });
+}
+async function recoverTasks() {
+  const state = await readState(), config = modelSettings.current(), pending = [];
+  for (const task of state.tasks) {
+    if (!['queued','running','unknown'].includes(task.status)) continue;
+    const results = state.results.filter(result => result.taskId === task.id);
+    if (results.length) {
+      task.status = 'completed'; task.resultIds = results.map(result => result.id); task.provider = results[0].provider; task.completedAt ||= results[0].createdAt; delete task.error;
+      const shot = state.shots.find(shot => shot.id === task.shotId);
+      if (task.kind === 'image' && shot && shot.selectedImageId === task.previousImageId && !mediaExpired(results[0])) shot.selectedImageId = results[0].id;
+    } else if (task.kind === 'video' && task.remoteTaskId && !mediaExpired(task) && configured('seedance', config) && task.videoApiType === config.VIDEO_API_TYPE && (!task.videoBaseUrl || task.videoBaseUrl === config.SEEDANCE_BASE_URL)) {
+      pending.push(task);
+    } else {
+      task.status = 'unknown'; task.completedAt ||= now();
+      task.error ||= '服务重启中断了任务；请核实上游记录及原视频服务配置，避免重复提交计费';
+    }
+  }
+  await saveState(state);
+  for (const task of pending) startTask(task, state, { ...config, SEEDANCE_MODEL: task.model || config.SEEDANCE_MODEL });
 }
 function publicMedia(record) {
   if (!record.dataUrl?.startsWith('data:')) return record;
@@ -482,8 +490,8 @@ async function api(req, res, pathname, url) {
       }catch(err){return error(res,err.message,err.status||400);}
     }
     const taskParams={...params};if(body.kind==='video'&&videoMedia!==undefined)taskParams.videoMedia=videoMedia;
-    const task={id:id('task'),estimatedCost:generationConfig.estimate(body.kind,params,config),...(body.imageNodeId ? {imageNodeId:body.imageNodeId} : {}),shotId:body.shotId,kind:body.kind,prompt:body.prompt.trim(),inputImageUrl:body.inputImageUrl||null,inputImageId:body.inputImageId||null,referenceImageIds:[...new Set(referenceImageIds)],previousImageId:state.shots.find(shot=>shot.id===body.shotId).selectedImageId,params:taskParams,status:'queued',createdAt:now(),model:body.kind==='image'?config.OPENAI_IMAGE_MODEL:config.SEEDANCE_MODEL,...(body.kind==='video'?{videoApiType:config.VIDEO_API_TYPE}:{})};
-    state.tasks.unshift(task);await saveState(state);void runTask(task,state,config);return send(res,202,task);
+    const task={id:id('task'),estimatedCost:generationConfig.estimate(body.kind,params,config),...(body.imageNodeId ? {imageNodeId:body.imageNodeId} : {}),shotId:body.shotId,kind:body.kind,prompt:body.prompt.trim(),inputImageUrl:body.inputImageUrl||null,inputImageId:body.inputImageId||null,referenceImageIds:[...new Set(referenceImageIds)],previousImageId:state.shots.find(shot=>shot.id===body.shotId).selectedImageId,params:taskParams,status:'queued',createdAt:now(),model:body.kind==='image'?config.OPENAI_IMAGE_MODEL:config.SEEDANCE_MODEL,...(body.kind==='video'?{videoApiType:config.VIDEO_API_TYPE,videoBaseUrl:config.SEEDANCE_BASE_URL}:{})};
+    state.tasks.unshift(task);await saveState(state);startTask(task,state,config);return send(res,202,task);
   }
   if (req.method === 'POST' && pathname.startsWith('/api/results/')) { const result = state.results.find((r) => r.id === pathname.split('/').pop()); if (!result) return error(res, '找不到结果', 404); requireMedia(result); const body = await jsonBody(req); const shot = state.shots.find((s) => s.id === result.shotId); if (!shot) return error(res, '找不到镜头', 404); if (result.kind === 'image') shot.selectedImageId = result.id; if (result.kind === 'video') shot.selectedVideoId = result.id; await saveState(state); return send(res, 200, shot); }
   if (req.method === 'POST' && pathname === '/api/export') { const body = await jsonBody(req); const shotIds = body.shotIds || []; const shots = state.shots.filter((s) => shotIds.includes(s.id)); return send(res, 200, { ok: true, filename: `ai-media-flow-${Date.now()}.json`, manifest: shots.map((shot) => ({ name: shot.name, image: findMedia(state, shot.selectedImageId)?.name || null, video: state.results.find((r) => r.id === shot.selectedVideoId)?.name || null })) }); }
@@ -514,8 +522,8 @@ async function serve(req, res) {
     res.writeHead(200,{'content-type':mimeTypes[extname(file)]||'application/octet-stream','cache-control':'no-store','x-frame-options':'DENY'});res.end(req.method==='HEAD'?undefined:await readFile(file));
   }catch(err){if(res.headersSent)return res.destroy();error(res,err instanceof URIError?'地址格式无效':err.message||'服务器错误',err instanceof URIError?400:err.status||500);}
 }
-await ensureState();
 await cleanExpiredMedia(true);
+await recoverTasks();
 let cloudCleanupPending;
 function maintainMedia() {
   return cleanExpiredMedia(true).then(()=>{

@@ -91,8 +91,13 @@ export function videoRequest(prompt, image, params = {}, config) {
 
 // Concrete adapters share only HTTP/polling. No provider plugin framework is needed for three protocols.
 export async function generateVideo(prompt, image, params, config, onUpdate = async () => {}, options = {}) {
-  const request = videoRequest(prompt, image, params, config);
-  const { type, path, body } = request;
+  const resuming = options.remoteTaskId !== undefined;
+  const type = config.VIDEO_API_TYPE || 'openai';
+  if (!videoApiTypes.includes(type)) invalid('不支持的视频接口类型');
+  if (resuming && (typeof options.remoteTaskId !== 'string' || !options.remoteTaskId || options.remoteTaskId.length > 300)) invalid('无效的上游任务 ID');
+  const { path, body } = resuming
+    ? { path: { volcengine: '/contents/generations/tasks', openai: '/videos', kyyReactApi: '/v2/model-center/tasks' }[type] }
+    : videoRequest(prompt, image, params, config);
   const base = config.SEEDANCE_BASE_URL.replace(/\/+$/, '');
   const authorization = `Bearer ${config.SEEDANCE_API_KEY}`;
   const fetcher = options.fetch || fetch;
@@ -113,7 +118,7 @@ export async function generateVideo(prompt, image, params, config, onUpdate = as
     return payload;
   }
 
-  if (type === 'kyyReactApi') {
+  if (type === 'kyyReactApi' && !resuming) {
     const family = config.SEEDANCE_MODEL.includes('_fast_') ? 'sd_fast' : config.SEEDANCE_MODEL.includes('_mini_') ? 'sd_mini' : 'sd';
     async function ensureAsset(reference, assetType) {
       const existing = reference.startsWith('assetId://');
@@ -139,13 +144,13 @@ export async function generateVideo(prompt, image, params, config, onUpdate = as
   }
 
   let job;
-  try { job = await json(path, body); }
+  try { job = resuming ? await json(`${path}/${encodeURIComponent(options.remoteTaskId)}`) : await json(path, body); }
   catch (err) {
-    if (!err.httpStatus || err.httpStatus >= 500) err.uncertain = true;
+    if (resuming || !err.httpStatus || err.httpStatus >= 500) err.uncertain = true;
     throw err;
   }
-  if (typeof job?.id !== 'string' || !job.id || job.id.length > 300) throw Object.assign(new Error('提交后未返回有效任务 ID，请核实上游记录，避免重复计费'), { uncertain: true });
-  const remoteId = job.id;
+  const remoteId = resuming ? options.remoteTaskId : job?.id;
+  if (typeof remoteId !== 'string' || !remoteId || remoteId.length > 300) throw Object.assign(new Error('提交后未返回有效任务 ID，请核实上游记录，避免重复计费'), { uncertain: true });
   const jobPath = `${path}/${encodeURIComponent(remoteId)}`;
   const done = type === 'volcengine' ? 'succeeded' : 'completed';
   let networkFailures = 0;

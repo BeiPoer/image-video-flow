@@ -4,6 +4,7 @@ import {readFile} from 'node:fs/promises';
 import {join} from 'node:path';
 import {startWorkflowServer,png} from './fixtures/workflow-server.js';
 import {retentionMs} from '../media-retention.js';
+import {createStateStore} from '../state-store.js';
 
 test('bootstrap stays private and small; public read-only media preserves bytes, ranges and expiry checks',async t=>{
   const bytes=Buffer.alloc(2*1024*1024,123),source='data:image/png;base64,'+bytes.toString('base64'),createdAt=new Date().toISOString();
@@ -45,6 +46,7 @@ test('bootstrap stays private and small; public read-only media preserves bytes,
   assert.equal((await app.fetch(app.base+'/api/media/asset-missing')).status,404);
   assert.equal((await app.fetch(app.base+'/api/media/asset-html')).status,415);
   assert.equal((await app.fetch(app.base+'/api/media/asset-large',{method:'POST'})).status,404);
-  const stored=JSON.parse(await readFile(join(app.dir,'state.json'),'utf8'));
+  assert.doesNotMatch(await readFile(join(app.dir,'state.json'),'utf8'),/base64,/);
+  const stored=await createStateStore(app.dir).read();
   assert.equal(stored.assets[0].dataUrl,source);assert.equal(stored.tasks[0].inputImageUrl,source,'display serialization must not change provider inputs');
 });

@@ -7,7 +7,7 @@ import { join, resolve } from 'node:path';
 import {loginFetch,testPassword} from './auth.js';
 
 export const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j1ioAAAAASUVORK5CYII=';
-export async function startWorkflowServer(initialState) {
+export async function startWorkflowServer(initialState, env = {}) {
   const dir = await mkdtemp(join(tmpdir(), 'ai-flow-workflow-'));
   const calls = [];
   let child, rejectEdits = false;
@@ -32,7 +32,9 @@ export async function startWorkflowServer(initialState) {
         return res.end(JSON.stringify({ data:Array.from({length:Number(body.n ?? 1)},()=>({b64_json:png})) }));
       }
       if (req.url === '/v3/contents/generations/tasks') return res.end(JSON.stringify({id:'mock-video',status:'succeeded',content:{video_url:'https://example.test/video.mp4'}}));
+      if (req.url === '/v3/contents/generations/tasks/mock-video') return res.end(JSON.stringify({status:'succeeded',content:{video_url:'https://example.test/video.mp4'}}));
       if (req.url === '/v1/videos') return res.end(JSON.stringify({id:'local-video',status:'completed'}));
+      if (req.url === '/v1/videos/local-video') return res.end(JSON.stringify({status:'completed'}));
       if (req.url === '/v1/videos/local-video/content') {res.setHeader('content-type','video/mp4');return res.end('123456789');}
       res.statusCode=404; res.end('{}');
     } catch { res.statusCode=500; res.end('{}'); }
@@ -48,7 +50,7 @@ export async function startWorkflowServer(initialState) {
     if (initialState) await writeFile(join(dir,'state.json'),JSON.stringify(initialState));
     await new Promise(resolve=>mock.listen(0,'127.0.0.1',resolve));
     const provider='http://127.0.0.1:'+mock.address().port;
-    child=spawn(process.execPath,['server.js'],{cwd:new URL('../../',import.meta.url),env:{...process.env,APP_ACCESS_PASSWORD:testPassword,APP_COOKIE_SECURE:'false',AI_FLOW_PORT:'0',AI_FLOW_DATA_DIR:dir,COS_ENABLED:'false',OPENAI_API_KEY:'mock-key',OPENAI_BASE_URL:provider+'/v1',OPENAI_IMAGE_MODEL:'gpt-image-2',SEEDANCE_API_KEY:'mock-video-key',SEEDANCE_BASE_URL:provider+'/v3',VIDEO_API_TYPE:'volcengine'},stdio:['ignore','pipe','pipe']});
+    child=spawn(process.execPath,['server.js'],{cwd:new URL('../../',import.meta.url),env:{...process.env,APP_ACCESS_PASSWORD:testPassword,APP_COOKIE_SECURE:'false',AI_FLOW_PORT:'0',AI_FLOW_DATA_DIR:dir,COS_ENABLED:'false',OPENAI_API_KEY:'mock-key',OPENAI_BASE_URL:provider+'/v1',OPENAI_IMAGE_MODEL:'gpt-image-2',SEEDANCE_API_KEY:'mock-video-key',SEEDANCE_BASE_URL:provider+'/v3',VIDEO_API_TYPE:'volcengine',...env},stdio:['ignore','pipe','pipe']});
     const base=await new Promise((resolve,reject)=>{
       const timer=setTimeout(()=>reject(Error('startup timeout')),5000);
       child.stdout.on('data',chunk=>{const match=String(chunk).match(/http:\/\/localhost:(\d+)/);if(match){clearTimeout(timer);resolve('http://127.0.0.1:'+match[1]);}});
