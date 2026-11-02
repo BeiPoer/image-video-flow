@@ -8,6 +8,7 @@ import {mkdir, mkdtemp, readFile, readdir} from 'node:fs/promises';
 import {join} from 'node:path';
 import {createMediaPreviews} from '../media-previews.js';
 import {startWorkflowServer} from './fixtures/workflow-server.js';
+import {setTimeout as delay} from 'node:timers/promises';
 
 const createdAt = new Date().toISOString();
 const record = id => ({id, kind:'image', createdAt, dataUrl:'data:image/png;base64,eA=='});
@@ -48,6 +49,20 @@ test('failed decodes are throttled and never fall back to the original media', a
   assert.equal(calls,1);
 });
 
+test('background warmup shares the display job, skips audio and absorbs preview failures', async () => {
+  let calls=0, release;
+  const gate=new Promise(resolve=>{release=resolve;});
+  const cache=createMediaPreviews(await directory(),async()=>{calls++;await gate;return Buffer.from('preview');});
+  const item=record('asset-warm');
+  const background=cache.warm(item),display=cache.get(item);
+  release();
+  assert.equal(await background,true);
+  assert.equal((await display).toString(),'preview');assert.equal(calls,1);
+  assert.equal(await cache.warm({...item,kind:'audio'}),false);assert.equal(calls,1);
+  const failing=createMediaPreviews(await directory(),async()=>{throw Error('decode failed');});
+  assert.equal(await failing.warm(record('asset-invalid')),false);
+});
+
 test('real HTTP thumbnails preserve originals, resize images, extract first video frame and cache privately', async t => {
   const original=await sharp({create:{width:1600,height:900,channels:3,background:'#e32a1b'}}).png().toBuffer();
   const {stdout:video}=await promisify(execFile)(process.env.FFMPEG_PATH||ffmpeg,[
@@ -59,7 +74,7 @@ test('real HTTP thumbnails preserve originals, resize images, extract first vide
   const clip={...record('result-video'),kind:'video',shotId:'shot-s',dataUrl:'data:video/mp4;base64,'+video.toString('base64')};
   const remote={...asset,id:'asset-remote',dataUrl:'https://unavailable.invalid/original.png'};
   // Preserve fixture files: this workspace requires confirmation before deleting files.
-  const app=await startWorkflowServer({projects:[{id:'project-p'}],shots:[{id:'shot-s',projectId:'project-p'}],assets:[asset,remote],results:[clip],tasks:[]},{},{keepFiles:true});
+  const app=await startWorkflowServer({projects:[{id:'project-p'}],shots:[{id:'shot-s',projectId:'project-p'}],assets:[asset,remote],results:[clip],tasks:[]},{},{keepFiles:true,imageBase64:original.toString('base64'),videoBytes:video});
   t.after(app.stop);
   const bootstrap=await (await app.fetch(app.base+'/api/bootstrap')).json();
   assert.equal(bootstrap.assets[0].thumbnailUrl,'/api/thumbnails/asset-photo');
@@ -86,6 +101,39 @@ test('real HTTP thumbnails preserve originals, resize images, extract first vide
   const uploaded=await (await app.fetch(app.base+'/api/assets',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({name:'新上传',kind:'image',dataUrl:asset.dataUrl})})).json();
   assert.match(uploaded.thumbnailUrl,/^\/api\/thumbnails\/asset-/);
   assert.doesNotMatch(uploaded.dataUrl,/^data:/);
+  async function waitForPreview(id) {
+    for(let i=0;i<100;i++){
+      try { return await readFile(join(app.dir,'previews',id+'.webp')); }
+      catch(err){if(err.code!=='ENOENT')throw err;}
+      await delay(30);
+    }
+    assert.fail('background preview was not written: '+id);
+  }
+  // Check the disk without ever requesting these thumbnail URLs.
+  assert.equal((await sharp(await waitForPreview(uploaded.id)).metadata()).format,'webp');
+  async function api(path,body,method='POST',headers={}) {
+    const response=await app.fetch(app.base+path,{method,headers:{'content-type':'application/json',...headers},...(body?{body:JSON.stringify(body)}:{})});
+    const result=await response.json();assert.ok(response.ok,JSON.stringify(result));return result;
+  }
+  const uploadedVideo=await api('/api/assets',{name:'上传视频',kind:'video',dataUrl:clip.dataUrl});
+  assert.equal((await sharp(await waitForPreview(uploadedVideo.id)).metadata()).format,'webp');
+  const settings=await api('/api/settings',null,'GET');
+  await api('/api/settings',{VIDEO_API_TYPE:'openai',SEEDANCE_BASE_URL:settings.OPENAI_BASE_URL},'PUT',{'x-settings-token':settings.settingsToken});
+  for(const kind of ['image','video']){
+    const task=await api('/api/tasks',{shotId:'shot-s',kind,prompt:'预生成测试',...(kind==='image'?{params:{n:2}}:{})});
+    let results;
+    for(let i=0;i<100;i++){
+      const state=await api('/api/bootstrap',null,'GET'),current=state.tasks.find(item=>item.id===task.id);
+      assert.notEqual(current.status,'failed',current.error);
+      if(current.status==='completed'){results=state.results.filter(item=>item.taskId===task.id);break;}
+      await delay(30);
+    }
+    assert.equal(results?.length,kind==='image'?2:1);
+    for(const result of results)assert.equal((await sharp(await waitForPreview(result.id)).metadata()).format,'webp');
+  }
+  const invalid=await api('/api/assets',{name:'无法解码',kind:'image',dataUrl:'data:image/png;base64,YWJj'});
+  await delay(100);
+  assert.ok((await api('/api/bootstrap',null,'GET')).assets.some(item=>item.id===invalid.id),'failed preview must not undo successful upload');
   assert.equal((await app.fetch(app.base+'/api/thumbnails/asset-missing')).status,404);
   assert.equal((await app.fetch(app.base+'/api/thumbnails/asset-photo',{method:'POST'})).status,404);
   assert.equal((await readFile(join(app.dir,'previews','asset-photo.webp'))).length>0,true);

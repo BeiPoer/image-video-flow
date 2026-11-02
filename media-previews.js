@@ -101,5 +101,15 @@ export function createMediaPreviews(dataDir, render = renderMediaPreview) {
     res.writeHead(200, {...headers, 'content-length':bytes.length});
     res.end(req.method === 'HEAD' ? undefined : bytes);
   }
-  return {get, serve};
+  async function warm(record) {
+    if (!['image','video'].includes(record?.kind)) return false;
+    try { await get(record); return true; }
+    catch {
+      // Preview failure must never fail an upload or a successful generation.
+      // get() retains its cooldown; a later display request can retry.
+      console.warn('预览预生成失败，后续访问时重试：', record.id);
+      return false;
+    }
+  }
+  return {get, serve, warm};
 }

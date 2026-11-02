@@ -243,6 +243,7 @@ async function runTask(task, state, config = modelSettings.current()) {
     const shot = state.shots.find(item => item.id === task.shotId);
     if (task.kind === 'image' && shot && shot.selectedImageId === task.previousImageId) shot.selectedImageId = results[0].id;
     task.status = 'completed'; task.provider = provider; task.resultIds = results.map(result => result.id); task.completedAt = now(); await saveState(state);
+    for (const result of results) void mediaPreviews.warm(result);
   } catch (err) { task.status = err.uncertain || ['completed','succeeded','saving'].includes(task.upstreamStatus) ? 'unknown' : 'failed'; task.error = [config.OPENAI_API_KEY, config.SEEDANCE_API_KEY].filter(Boolean).reduce((message, key) => message.split(key).join('[REDACTED]'), err.message); if (cosStorage.enabled) task.error = cosStorage.redactError(task.error); task.completedAt = now(); await saveState(state); }
 }
 function startTask(task, state, config) {
@@ -417,7 +418,7 @@ async function api(req, res, pathname, url) {
     Object.assign(shot, { name: body.name ?? shot.name, imagePrompt: body.imagePrompt ?? shot.imagePrompt, videoPrompt: body.videoPrompt ?? shot.videoPrompt, assetIds: body.assetIds ?? shot.assetIds, selectedImageId: Object.hasOwn(body, 'selectedImageId') ? body.selectedImageId : shot.selectedImageId, selectedVideoId: body.selectedVideoId ?? shot.selectedVideoId });
     await saveState(state); return send(res, 200, shot);
   }
-  if (req.method === 'POST' && pathname === '/api/assets') { const body = await jsonBody(req, 72_000_000); if (!body.name || !body.dataUrl) return error(res, '素材名称和文件不能为空'); if (body.projectId && !state.projects.some(item => item.id === body.projectId)) return error(res, '找不到画布', 404); const asset = { id: id('asset'), projectId: body.projectId || null, name: body.name, kind: body.kind || 'image', mime: body.mime || '', dataUrl: body.dataUrl, source: 'uploaded', createdAt: now() }; state.assets.unshift(asset); await saveState(state); await syncCloudMedia(asset, state); return send(res, 201, publicMedia(asset)); }
+  if (req.method === 'POST' && pathname === '/api/assets') { const body = await jsonBody(req, 72_000_000); if (!body.name || !body.dataUrl) return error(res, '素材名称和文件不能为空'); if (body.projectId && !state.projects.some(item => item.id === body.projectId)) return error(res, '找不到画布', 404); const asset = { id: id('asset'), projectId: body.projectId || null, name: body.name, kind: body.kind || 'image', mime: body.mime || '', dataUrl: body.dataUrl, source: 'uploaded', createdAt: now() }; state.assets.unshift(asset); await saveState(state); await syncCloudMedia(asset, state); void mediaPreviews.warm(asset); return send(res, 201, publicMedia(asset)); }
   if (req.method === 'DELETE' && pathname.startsWith('/api/assets/')) {
     const assetId = pathname.slice('/api/assets/'.length);
     const index = state.assets.findIndex(asset => asset.id === assetId);

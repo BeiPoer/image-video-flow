@@ -7,7 +7,7 @@ import { join, resolve } from 'node:path';
 import {loginFetch,testPassword} from './auth.js';
 
 export const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j1ioAAAAASUVORK5CYII=';
-export async function startWorkflowServer(initialState, env = {}, {keepFiles = false} = {}) {
+export async function startWorkflowServer(initialState, env = {}, {keepFiles = false, imageBase64 = png, videoBytes = '123456789'} = {}) {
   const dir = await mkdtemp(join(tmpdir(), 'ai-flow-workflow-'));
   const calls = [];
   let child, rejectEdits = false;
@@ -29,13 +29,13 @@ export async function startWorkflowServer(initialState, env = {}, {keepFiles = f
       if (req.url === '/v1/images/edits' && rejectEdits) { res.statusCode=400; return res.end(JSON.stringify({error:{message:'edits are unavailable'}})); }
       if (req.url.startsWith('/v1/images/')) {
         if(holdImages)await new Promise(resolve=>imageReleases.push(resolve));
-        return res.end(JSON.stringify({ data:Array.from({length:Number(body.n ?? 1)},()=>({b64_json:png})) }));
+        return res.end(JSON.stringify({ data:Array.from({length:Number(body.n ?? 1)},()=>({b64_json:imageBase64})) }));
       }
       if (req.url === '/v3/contents/generations/tasks') return res.end(JSON.stringify({id:'mock-video',status:'succeeded',content:{video_url:'https://example.test/video.mp4'}}));
       if (req.url === '/v3/contents/generations/tasks/mock-video') return res.end(JSON.stringify({status:'succeeded',content:{video_url:'https://example.test/video.mp4'}}));
       if (req.url === '/v1/videos') return res.end(JSON.stringify({id:'local-video',status:'completed'}));
       if (req.url === '/v1/videos/local-video') return res.end(JSON.stringify({status:'completed'}));
-      if (req.url === '/v1/videos/local-video/content') {res.setHeader('content-type','video/mp4');return res.end('123456789');}
+      if (req.url === '/v1/videos/local-video/content') {res.setHeader('content-type','video/mp4');return res.end(videoBytes);}
       res.statusCode=404; res.end('{}');
     } catch { res.statusCode=500; res.end('{}'); }
   });
