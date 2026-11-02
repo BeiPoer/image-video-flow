@@ -14,15 +14,17 @@ import crypto from 'node:crypto';
 import { createSettingsStore, validateSettings } from './model-settings.js';
 import { generateVideo, videoRequest } from './video-api.js';
 import { createCosStore } from './cos-storage.js';
-import { downloadImage } from './image-source.js';
 import { createAccessControl } from './access-control.js';
 import { expireResources, mediaExpired, requireMedia, retentionMs } from './media-retention.js';
 import { createStateStore } from './state-store.js';
+import { createMediaPreviews } from './media-previews.js';
+import { imageOriginal } from './image-originals.js';
 
 const root = dirname(fileURLToPath(import.meta.url));
 const publicDir = join(root, 'public');
 const dataDir = resolve(process.env.AI_FLOW_DATA_DIR || join(root, 'data'));
 const stateStore = createStateStore(dataDir);
+const mediaPreviews = createMediaPreviews(dataDir);
 const { read: readState, save: saveState } = stateStore;
 const access = await createAccessControl(dataDir);
 const modelSettings = await createSettingsStore(dataDir);
@@ -139,7 +141,7 @@ function kyyRecordKind(record) { return record?.kind || ({ image: 'image', video
 function findMedia(state, sourceId) { return state.assets.find(item => item.id === sourceId) || state.results.find(item => item.id === sourceId); }
 async function imageReference(record) {
   requireMedia(record);
-  const source = isLocalMedia(record) ? record : { ...record, dataUrl: await downloadImage(record.dataUrl) };
+  const source = isLocalMedia(record) ? record : { ...record, dataUrl: await imageOriginal(record) };
   requireMedia(record);
   const mime = kyyRecordMime(source);
   if (!['image/png', 'image/jpeg', 'image/webp'].includes(mime)) throw new Error('参考图生图支持 PNG、JPEG、WebP，请替换其他格式或演示图片');
@@ -174,7 +176,7 @@ async function syncCloudMedia(record, state) {
 async function cloudReferenceUrl(record, sourceId) {
   requireMedia(record);
   if (!isLocalMedia(record) && record.provider === 'openai') {
-    const downloaded = await downloadImage(record.dataUrl);
+    const downloaded = await imageOriginal(record);
     requireMedia(record);
     record.dataUrl = downloaded;
     await saveState(await readState());
@@ -269,9 +271,10 @@ async function recoverTasks() {
   for (const task of pending) startTask(task, state, { ...config, SEEDANCE_MODEL: task.model || config.SEEDANCE_MODEL });
 }
 function publicMedia(record) {
-  if (!record.dataUrl?.startsWith('data:')) return record;
+  const preview = !mediaExpired(record) && record.dataUrl && ['image','video'].includes(record.kind) ? {thumbnailUrl:'/api/thumbnails/'+encodeURIComponent(record.id)} : {};
+  if (!record.dataUrl?.startsWith('data:')) return {...record,...preview};
   const mime=record.dataUrl.slice(5,record.dataUrl.indexOf(',')).split(';')[0];
-  return {...record,mime,dataUrl:'/api/media/'+encodeURIComponent(record.id)};
+  return {...record,...preview,mime,dataUrl:'/api/media/'+encodeURIComponent(record.id)};
 }
 function publicTask(task) {
   const {inputImageUrl,...summary}=task;
@@ -290,6 +293,8 @@ function serveInlineMedia(req,res,record) {
   if (base64 && !/^[A-Za-z0-9+/=\r\n]+$/.test(encoded)) return error(res,'素材格式不匹配',415);
   if (!base64 && mime!=='image/svg+xml') return error(res,'素材格式不匹配',415);
   const bytes=base64?Buffer.from(encoded.replace(/\s/g,''),'base64'):Buffer.from(decodeURIComponent(encoded));
+  const remaining=Math.floor((Date.parse(record.createdAt)+retentionMs-Date.now())/1000);
+  const cacheControl=mime.startsWith('image/')?'private, max-age='+Math.max(0,Math.min(3600,remaining||0)):'private, no-store';
   const maxBytes=(mime.startsWith('image/')?30:mime.startsWith('video/')?50:15)*1024*1024;
   if(!bytes.length || bytes.length>maxBytes)return error(res,'素材为空或超过允许大小',413);
   let start = 0, end = bytes.length - 1;
@@ -300,11 +305,13 @@ function serveInlineMedia(req,res,record) {
     end = range[1] && range[2] ? Math.min(bytes.length - 1, Number(range[2])) : bytes.length - 1;
     if (start > end || start >= bytes.length) { res.writeHead(416, { 'content-range': 'bytes */' + bytes.length }); return res.end(); }
   }
-  res.writeHead(req.headers.range ? 206 : 200, { 'content-type': mime, 'accept-ranges': 'bytes', 'content-length': end - start + 1, 'cache-control': 'private, no-store', 'x-content-type-options': 'nosniff', 'content-security-policy': "default-src 'none'; sandbox", ...(req.headers.range ? { 'content-range': 'bytes ' + start + '-' + end + '/' + bytes.length } : {}) });
+  res.writeHead(req.headers.range ? 206 : 200, { 'content-type': mime, 'accept-ranges': 'bytes', 'content-length': end - start + 1, 'cache-control': cacheControl, 'x-content-type-options': 'nosniff', 'content-security-policy': "default-src 'none'; sandbox", ...(req.headers.range ? { 'content-range': 'bytes ' + start + '-' + end + '/' + bytes.length } : {}) });
   return res.end(req.method === 'HEAD' ? undefined : bytes.subarray(start, end + 1));
 }
 async function api(req, res, pathname, url) {
   await cleanExpiredMedia();
+  const thumbnailRoute=/^\/api\/thumbnails\/((?:asset|result)-[A-Za-z0-9_-]+)$/.exec(pathname);
+  if(thumbnailRoute && ['GET','HEAD'].includes(req.method))return mediaPreviews.serve(req,res,findMedia(await readState(),thumbnailRoute[1]));
   const mediaRoute=/^\/api\/media\/((?:asset|result)-[A-Za-z0-9_-]+)$/.exec(pathname);
   if(mediaRoute && ['GET','HEAD'].includes(req.method)){
     const record=requireMedia(findMedia(await readState(),mediaRoute[1]));
@@ -410,7 +417,7 @@ async function api(req, res, pathname, url) {
     Object.assign(shot, { name: body.name ?? shot.name, imagePrompt: body.imagePrompt ?? shot.imagePrompt, videoPrompt: body.videoPrompt ?? shot.videoPrompt, assetIds: body.assetIds ?? shot.assetIds, selectedImageId: Object.hasOwn(body, 'selectedImageId') ? body.selectedImageId : shot.selectedImageId, selectedVideoId: body.selectedVideoId ?? shot.selectedVideoId });
     await saveState(state); return send(res, 200, shot);
   }
-  if (req.method === 'POST' && pathname === '/api/assets') { const body = await jsonBody(req, 72_000_000); if (!body.name || !body.dataUrl) return error(res, '素材名称和文件不能为空'); if (body.projectId && !state.projects.some(item => item.id === body.projectId)) return error(res, '找不到画布', 404); const asset = { id: id('asset'), projectId: body.projectId || null, name: body.name, kind: body.kind || 'image', mime: body.mime || '', dataUrl: body.dataUrl, source: 'uploaded', createdAt: now() }; state.assets.unshift(asset); await saveState(state); await syncCloudMedia(asset, state); return send(res, 201, asset); }
+  if (req.method === 'POST' && pathname === '/api/assets') { const body = await jsonBody(req, 72_000_000); if (!body.name || !body.dataUrl) return error(res, '素材名称和文件不能为空'); if (body.projectId && !state.projects.some(item => item.id === body.projectId)) return error(res, '找不到画布', 404); const asset = { id: id('asset'), projectId: body.projectId || null, name: body.name, kind: body.kind || 'image', mime: body.mime || '', dataUrl: body.dataUrl, source: 'uploaded', createdAt: now() }; state.assets.unshift(asset); await saveState(state); await syncCloudMedia(asset, state); return send(res, 201, publicMedia(asset)); }
   if (req.method === 'DELETE' && pathname.startsWith('/api/assets/')) {
     const assetId = pathname.slice('/api/assets/'.length);
     const index = state.assets.findIndex(asset => asset.id === assetId);

@@ -13,7 +13,9 @@ if errorlevel 1 (
   exit /b 1
 )
 
-if exist "package-lock.json" if not exist "node_modules\cos-nodejs-sdk-v5\package.json" (
+set "FLOW_INSTALL_DEPS="
+for %%P in (cos-nodejs-sdk-v5 sharp ffmpeg-static) do if not exist "node_modules\%%P\package.json" set "FLOW_INSTALL_DEPS=1"
+if exist "package-lock.json" if defined FLOW_INSTALL_DEPS (
   echo Installing required dependencies...
   call npm ci --omit=dev
   if errorlevel 1 (

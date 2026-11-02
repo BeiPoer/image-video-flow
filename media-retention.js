@@ -13,10 +13,12 @@ export function requireMedia(record) {
   return record;
 }
 function filesFor(record) {
+  const previews = /^(?:asset|result)-[A-Za-z0-9_-]+$/.test(record.id) && ['image','video'].includes(record.kind)
+    ? ['previews/'+record.id+'.webp', ...(record.dataUrl?.startsWith('data:video/') ? ['previews/'+record.id+'.source.mp4'] : [])] : [];
   const local = /^\/api\/video-results\/(task-[a-f0-9-]+\.mp4)$/.exec(record.dataUrl || '');
-  if (local) return ['videos/' + local[1]];
-  if (record.kind === 'video' && /^https?:\/\//.test(record.dataUrl || '')) return ['video-downloads/' + createHash('sha256').update(record.dataUrl).digest('hex') + '.mp4'];
-  return [];
+  if (local) return [...previews, 'videos/' + local[1]];
+  if (record.kind === 'video' && /^https?:\/\//.test(record.dataUrl || '')) return [...previews, 'video-downloads/' + createHash('sha256').update(record.dataUrl).digest('hex') + '.mp4'];
+  return previews;
 }
 // Keep pending filenames on tombstones so a failed disk deletion is retried after restart.
 export async function expireResources(state, dataDir, save, time = Date.now(), scanFiles = true) {
@@ -51,7 +53,7 @@ export async function expireResources(state, dataDir, save, time = Date.now(), s
   const liveFiles = new Set(records.filter(record=>!mediaExpired(record,time)).flatMap(filesFor));
   for (const record of records) if (record.deletedAt && record.purgeFiles?.length) {
     for (const file of [...record.purgeFiles]) {
-      if (!/^(?:videos\/task-[a-f0-9-]+|video-downloads\/[a-f0-9]{64})\.mp4$/.test(file)) throw new Error('无效的过期资源文件路径');
+      if (!/^(?:(?:videos\/task-[a-f0-9-]+|video-downloads\/[a-f0-9]{64})\.mp4|previews\/(?:asset|result)-[A-Za-z0-9_-]+\.(?:webp|source\.mp4))$/.test(file)) throw new Error('无效的过期资源文件路径');
       try { if (!liveFiles.has(file)) await rm(join(dataDir,file),{force:true}); }
       catch (err) { errors.push(err); continue; }
       record.purgeFiles = record.purgeFiles.filter(value=>value!==file); changed = true;
@@ -60,12 +62,12 @@ export async function expireResources(state, dataDir, save, time = Date.now(), s
   if (changed) await persist();
   if (!scanFiles) return errors;
   // Also remove old orphan downloads, recovered videos and interrupted temporary files.
-  for (const folder of ['videos','video-downloads','recovered-videos']) {
+  for (const folder of ['videos','video-downloads','recovered-videos','previews']) {
     let entries;
     try { entries = await readdir(join(dataDir,folder),{withFileTypes:true}); }
     catch (err) { if (err.code!=='ENOENT') errors.push(err); continue; }
     for (const entry of entries) {
-      if (!entry.isFile() || !/\.(mp4|tmp)$/.test(entry.name) || liveFiles.has(folder+'/'+entry.name)) continue;
+      if (!entry.isFile() || !/\.(mp4|webp|tmp)$/.test(entry.name) || liveFiles.has(folder+'/'+entry.name)) continue;
       const file=join(dataDir,folder,entry.name);
       try {
         const task=folder==='recovered-videos'?state.tasks.find(task=>entry.name===task.remoteTaskId+'.mp4'):null;

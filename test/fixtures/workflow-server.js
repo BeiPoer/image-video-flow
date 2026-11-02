@@ -7,7 +7,7 @@ import { join, resolve } from 'node:path';
 import {loginFetch,testPassword} from './auth.js';
 
 export const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j1ioAAAAASUVORK5CYII=';
-export async function startWorkflowServer(initialState, env = {}) {
+export async function startWorkflowServer(initialState, env = {}, {keepFiles = false} = {}) {
   const dir = await mkdtemp(join(tmpdir(), 'ai-flow-workflow-'));
   const calls = [];
   let child, rejectEdits = false;
@@ -44,7 +44,7 @@ export async function startWorkflowServer(initialState, env = {}) {
     if (child && child.exitCode === null && child.signalCode === null) { const exited=once(child,'exit'); child.kill(); await exited; }
     mock.closeAllConnections(); await new Promise(resolve=>mock.close(resolve));
     if (!resolve(dir).startsWith(resolve(tmpdir()) + (process.platform==='win32'?'\\':'/')+'ai-flow-workflow-')) throw Error('Unsafe test directory');
-    await rm(dir,{recursive:true,force:true});
+    if (!keepFiles) await rm(dir,{recursive:true,force:true});
   }
   try {
     if (initialState) await writeFile(join(dir,'state.json'),JSON.stringify(initialState));

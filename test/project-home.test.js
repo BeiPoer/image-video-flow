@@ -27,7 +27,8 @@ test('home lists projects without auto-entering, project routes restore on reloa
   assert.equal(home.node('homePage').hidden,false);assert.equal(home.node('workspacePage').hidden,true);
   assert.equal(home.node('historyButton').hidden,true);assert.equal(vm.runInContext('projectId',home.ctx),null);
   assert.match(home.node('homeProjectGrid').innerHTML,/香氛项目/);assert.match(home.node('homeProjectGrid').innerHTML,/&lt;测试项目&gt;/);assert.match(home.node('homeProjectGrid').innerHTML,/1 个任务生成中/);
-  assert.match(home.node('homeProjectGrid').innerHTML,/src="\/api\/media\/asset-a1"/);
+  assert.match(home.node('homeProjectGrid').innerHTML,/src="\/api\/thumbnails\/a1"/);
+  assert.doesNotMatch(home.node('homeProjectGrid').innerHTML,/src="\/api\/media\//);
   assert.ok(home.calls.every(c=>!c.method||c.method==='GET'),'opening home must not create projects');
   await vm.runInContext("setProject('p1')",home.ctx);
   assert.equal(home.location.hash,'#/project/p1');assert.equal(home.node('workspacePage').hidden,false);

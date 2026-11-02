@@ -8,7 +8,7 @@ const $ = selector => document.querySelector(selector);
 const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[char]));
 const media = id => state.assets.find(item => item.id === id) || state.results.find(item => item.id === id);
 const mime = item => item?.dataUrl?.match(/^data:([^;,]+)/)?.[1] || item?.mime || ({ image:'image/png', video:'video/mp4', audio:'audio/mpeg' }[item?.kind] || '');
-const sourceUrl = value => /^(?:https?:\/\/|data:(?:image|video|audio)\/|\/api\/(?:video-results|media)\/)/i.test(value || '') ? value : '';
+const sourceUrl = value => /^(?:https?:\/\/|data:(?:image|video|audio)\/|\/api\/(?:video-results|media|thumbnails)\/)/i.test(value || '') ? value : '';
 const state = { projects:[], shots:[], assets:[], results:[], tasks:[], models:{}, providers:{}, videoApiType:'openai', imageMaxCount:8, generation:generationConfig.defaults };
 let projectId = null;
 let routeReady = false, navigationVersion = 0;
@@ -98,10 +98,22 @@ function preview(item) {
   if (!item) return '<div class="media-empty">暂无预览</div>';
   if (item.deletedAt) return '<div class="media-empty media-deleted"><strong>已删除</strong><small>超过 7 天保留期</small></div>';
   const src = esc(displaySource(item));
-  if (item.kind === 'video' && src) return `<video src="${src}" controls preload="metadata" aria-label="${esc(item.name)}"></video>`;
-  if (item.kind === 'audio' && src) return `<audio src="${src}" controls aria-label="${esc(item.name)}"></audio>`;
-  if (item.kind === 'image' && src) return `<img src="${src}" alt="${esc(item.name)}" draggable="false" loading="lazy" />`;
+  const thumbnail = esc(sourceUrl(item.thumbnailUrl) || '/api/thumbnails/'+encodeURIComponent(item.id));
+  if (item.kind === 'video' && src) return `<button type="button" class="video-poster" data-play-video="${esc(item.id)}" aria-label="播放${esc(item.name)}"><img src="${thumbnail}" alt="${esc(item.name)}首帧" loading="lazy" decoding="async" draggable="false" /><span class="video-play-label">▶ 点击播放</span></button>`;
+  if (item.kind === 'audio' && src) return `<audio src="${src}" controls preload="none" aria-label="${esc(item.name)}"></audio>`;
+  if (item.kind === 'image' && src) return `<img src="${thumbnail}" alt="${esc(item.name)}" draggable="false" loading="lazy" decoding="async" />`;
   return '<div class="media-empty">无法预览</div>';
+}
+function playVideo(button) {
+  const item=media(button.dataset.playVideo),src=displaySource(item);
+  if(!item||item.kind!=='video'||!src)return showToast('视频已不可用');
+  const player=document.createElement('video');
+  player.controls=true;player.preload='none';player.playsInline=true;
+  player.setAttribute('aria-label',item.name||'视频');
+  player.src=src;
+  player.addEventListener('error',()=>showToast('视频加载失败，请稍后重试'),{once:true});
+  button.replaceWith(player);
+  player.play().catch(()=>{});
 }
 function reuseGenerationButton(item) {
   if(!item.taskId&&!item.prompt)return '';
@@ -567,6 +579,7 @@ function addConfirmed(id) { if(media(id)?.deletedAt)return showToast('资源已�
 function removeConfirmed(id) { confirmedIds = confirmedIds.filter(value => value !== id); selectedImageIds = selectedImageIds.filter(value => value !== id); render(); saveProjectMaterials().catch(error => showToast('确认素材未保存：' + error.message)); }
 $('#saveStatus').addEventListener('click', () => saveProjectMaterials().catch(error => showToast(error.message)));
 document.body.addEventListener('click', async event => {
+  const play=event.target.closest('[data-play-video]');if(play){playVideo(play);return;}
   const reuse=event.target.closest('[data-reuse-generation]');if(reuse){reuseGeneration(reuse.dataset.reuseGeneration);return;}
   const addVideo=event.target.closest('[data-confirm-video]');if(addVideo){await confirmVideo(addVideo.dataset.confirmVideo,true);return;}
   const removeVideo=event.target.closest('[data-unconfirm-video]');if(removeVideo){await confirmVideo(removeVideo.dataset.unconfirmVideo,false);return;}
