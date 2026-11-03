@@ -1,0 +1,43 @@
+test/video-api.test.js
+  s_c87e21ca905213::t_f7e178e38a4e64 7-39
+video-api.js
+  s_c87e21ca905213::t_5f48e3ab616e14 34-35,52-60,76-77,79
+public/styles.css
+  s_c87e21ca905213::t_3630e9530a4023 39
+test/video-controls.test.js
+  s_c87e21ca905213::t_3630e9530a4023 16-18,34,39,54-55,59,61,65,72-76
+  s_c87e21ca905213::t_a4c077087843d6 10,78,84-100
+  s_c87e21ca905213::t_5f48e3ab616e14 60,66-67,77,81-83
+  s_c87e21ca905213::t_745c5b897145da 79-80
+public/generation-config.js
+  s_c87e21ca905213::t_0bbc52d0dbd585 4-9
+  s_c87e21ca905213::t_5f48e3ab616e14 2-3
+public/app.js
+  s_c87e21ca905213::t_5f48e3ab616e14 509
+  s_c87e21ca905213::t_0bbc52d0dbd585 81,88,148,495,504-508,633
+test/generation-reuse.test.js
+  s_c87e21ca905213::t_3630e9530a4023 53
+public/index.html
+  s_c87e21ca905213::t_31c39aafd459e2 62
+README.md
+  s_c87e21ca905213::t_80a8f25da3df56 128,153
+  s_c87e21ca905213::t_f7e178e38a4e64 154
+test/dialogs.test.js
+  s_c87e21ca905213::t_3630e9530a4023 32-33
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "cc10c9929fa3fb3260a11b2375c06e17f14ad364",
+  "prompts": {},
+  "sessions": {
+    "s_c87e21ca905213": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a19fef-da6b-7341-827f-7aceb28e045d",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "beipoer <forczc@foxmail.com>"
+    }
+  }
+}
