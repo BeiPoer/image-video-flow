@@ -7,12 +7,15 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import {readFile} from 'node:fs/promises';
 import {imageRatios} from '../public/image-sizes.js';
+import {videoRequest} from '../video-api.js';
 
 test('video choices are inline radios; duration slider and number stay synchronized and respect protocol limits',async()=>{
   const html=await readFile(new URL('../public/index.html',import.meta.url),'utf8');
   const options=html.slice(html.indexOf('id="videoOptions"'),html.indexOf('<details class="advanced-video">'));
   assert.doesNotMatch(options,/<select/);assert.match(options,/type="range"/);
-  for(const field of ['videoRatio','videoResolution','videoFrameMode','videoSize'])assert.ok(options.includes(`data-video-option="${field}"`));
+  for(const field of ['videoRatio','videoResolution','videoFrameMode'])assert.ok(options.includes(`data-video-option="${field}"`));
+  assert.doesNotMatch(options,/videoSize|视频尺寸/);
+  assert.match(options,/id="videoRatio" value="16:9"/);
   const script=(await readFile(new URL('../public/app.js',import.meta.url),'utf8')).replace(/^import .+;\r?\n/gm,'');
   const nodes=new Map();
   const node=id=>{if(!nodes.has(id))nodes.set(id,{value:'',innerHTML:'',textContent:'',handlers:{},hidden:false,addEventListener(type,fn){this.handlers[type]=fn;}});return nodes.get(id);};
@@ -28,12 +31,12 @@ test('video choices are inline radios; duration slider and number stay synchroni
   node('videoDuration').value='99';node('videoDuration').handlers.change();assert.equal(node('videoDuration').value,'30');
   node('videoDuration').value='2';node('videoDuration').handlers.change();assert.equal(node('videoDuration').value,'2');
   node('videoDuration').value='6.4';node('videoDuration').handlers.change();assert.equal(node('videoDuration').value,'6');
-  for(const [field,value] of [['videoRatio','16:9'],['videoResolution','1080p'],['videoFrameMode','frames'],['videoSize','1280x720']]){
+  for(const [field,value] of [['videoRatio','16:9'],['videoResolution','1080p'],['videoFrameMode','frames']]){
     node('videoOptions').handlers.change({target:{dataset:{videoOption:field},value}});
     assert.equal(node(field).value,value);
   }
   vm.runInContext("state.videoApiType='openai';updateVideoMode()",context);
-  assert.equal(node('videoRatioWrap').hidden,true);assert.equal(node('videoSizeWrap').hidden,false);assert.equal(node('videoDurationRange').max,'30');
+  assert.equal(node('videoRatioWrap').hidden,false);assert.equal(node('videoDurationRange').max,'30');
   node('videoDuration').value='30';node('videoDuration').handlers.input();assert.equal(node('videoDurationRange').value,'30');
   vm.runInContext("state.videoApiType='kyyReactApi';updateVideoMode()",context);
   assert.equal(node('videoDuration').value,'30');assert.equal(node('videoDurationRange').value,'30');
@@ -48,17 +51,51 @@ test('video choices are inline radios; duration slider and number stay synchroni
   assert.match(node('toast').textContent,/最多添加 2 张/);
   assert.match(node('videoPicker').innerHTML,/首帧/);assert.match(node('videoPicker').innerHTML,/尾帧/);
   const labels=generationConfig.resolutions.map(value=>({value,box:{},closest(){return this.box;}}));
-  context.document.querySelectorAll=selector=>selector==='[data-video-option="videoResolution"]'?labels:[];
+  const ratioChoices=generationConfig.videoRatios('kyyReactApi').map(value=>({value}));
+  context.document.querySelectorAll=selector=>selector==='[data-video-option="videoResolution"]'?labels:selector==='[data-video-option="videoRatio"]'?ratioChoices:[];
   vm.runInContext("state.videoApiType='openai';state.generation={...generationConfig.defaults,VIDEO_RESOLUTIONS:'1080p,4k',VIDEO_MAX_SECONDS:'12',OPENAI_IMAGE_PRICE:'0.1',VIDEO_PRICE_1080P:'0.2',VIDEO_PRICE_4K:'0.5'};updateVideoMode()",context);
   assert.equal(node('videoDuration').max,'12');assert.equal(node('videoDuration').value,'12');
   assert.equal(labels[0].box.hidden,true);assert.equal(labels[1].box.hidden,true);assert.equal(labels[2].box.hidden,false);
-  assert.equal(node('videoResolution').value,'1080p');assert.match(node('videoSizeOptions').innerHTML,/1920x1080/);
+  assert.equal(node('videoResolution').value,'1080p');assert.equal(node('videoRatio').value,'16:9');
+  assert.deepEqual(ratioChoices.filter(input=>!input.disabled).map(input=>input.value),['16:9','9:16','1:1','4:3','3:4','21:9','adaptive']);
+  node('videoOptions').handlers.change({target:{dataset:{videoOption:'videoRatio'},value:'9:16'}});
   node('imageCount').value='7';node('imageCount').handlers.input();assert.equal(node('imageEstimate').textContent,'预估费用：¥0.70');
   assert.equal(node('videoEstimate').textContent,'预估费用：¥2.40');
   node('videoOptions').handlers.change({target:{dataset:{videoOption:'videoResolution'},value:'4k'}});
-  assert.equal(node('videoEstimate').textContent,'预估费用：¥6.00');assert.match(node('videoSizeOptions').innerHTML,/3840x2160/);
+  assert.equal(node('videoEstimate').textContent,'预估费用：¥6.00');assert.equal(node('videoRatio').value,'9:16','changing resolution preserves portrait ratio');
+  node('videoOptions').handlers.change({target:{dataset:{videoOption:'videoRatio'},value:'1:1'}});
+  vm.runInContext('updateVideoMode()',context);assert.equal(node('videoRatio').value,'1:1');
   node('videoDurationRange').value='5';node('videoDurationRange').handlers.input();assert.equal(node('videoEstimate').textContent,'预估费用：¥2.50');
   vm.runInContext("state.generation.VIDEO_MIN_SECONDS='10';state.generation.VIDEO_MAX_SECONDS='30';updateVideoMode()",context);
   assert.equal(node('videoDuration').min,'10');assert.equal(node('videoDurationRange').max,'30');
   assert.equal(node('videoDuration').value,'10');assert.equal(node('videoEstimate').textContent,'预估费用：¥5.00');
+  vm.runInContext("state.videoApiType='kyyReactApi';updateVideoMode()",context);
+  assert.ok(ratioChoices.every(input=>!input.disabled));
+  node('videoOptions').handlers.change({target:{dataset:{videoOption:'videoRatio'},value:'adaptive'}});
+  vm.runInContext('updateVideoMode()',context);assert.equal(node('videoRatio').value,'adaptive');
+  vm.runInContext("state.videoApiType='openai';updateVideoMode()",context);
+  assert.equal(node('videoRatio').value,'adaptive');assert.ok(ratioChoices[6].checked);
+  node('videoPrompt').value='验证比例提交';node('videoFrameMode').value='reference';
+  context.fetch=async(path,options)=>{context.submitted=JSON.parse(options.body);return {ok:true,json:async()=>({id:'t1'})};};
+  await vm.runInContext("selectedImageIds=['a0'];confirmedIds=['a0'];createShot=async()=>({id:'s1'});refresh=async()=>{};generateVideo()",context);
+  assert.deepEqual(JSON.parse(JSON.stringify(context.submitted.params)),{duration:10,resolution:'4k',ratio:'adaptive'});
+  const request=videoRequest('test',null,context.submitted.params,{VIDEO_API_TYPE:'openai'});
+  assert.deepEqual(request.body.metadata,{ratio:'adaptive',resolution:'4k'});assert.equal(request.body.size,undefined);
+});
+
+test('ratio requests map to pixel sizes only for the size adapter and preserve all ratios for other adapters',()=>{
+  for(const resolution of generationConfig.resolutions){
+    for(const [ratio,index] of [['16:9',1],['9:16',0]]){
+      const size=generationConfig.videoSizes(resolution)[index];
+      assert.equal(videoRequest('test',null,{ratio,resolution},{VIDEO_API_TYPE:'openai'}).body.size,size);
+      assert.equal(generationConfig.ratioForVideoSize(size),ratio);
+    }
+  }
+  assert.equal(generationConfig.ratioForVideoSize('1024x1792'),'9:16');
+  assert.equal(generationConfig.ratioForVideoSize('1792x1024'),'16:9');
+  assert.equal(generationConfig.ratioForVideoSize(undefined),undefined);
+  for(const ratio of generationConfig.videoRatios('kyyReactApi')){
+    assert.equal(videoRequest('test',null,{ratio},{VIDEO_API_TYPE:'kyyReactApi'}).body.aspect_ratio,ratio);
+    assert.equal(videoRequest('test',null,{ratio},{VIDEO_API_TYPE:'volcengine'}).body.ratio,ratio);
+  }
 });

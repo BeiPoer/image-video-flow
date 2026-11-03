@@ -78,14 +78,14 @@ function renderHome() {
   }).sort((a,b)=>b.time.localeCompare(a.time));
   setStableMarkup($('#homeProjectGrid'),cards.map(item=>item.html).join(''));
 }
-const videoDraftFields=['videoPrompt','videoDuration','videoRatio','videoSize','videoResolution','videoFrameMode','videoExternalImage'];
+const videoDraftFields=['videoPrompt','videoDuration','videoRatio','videoResolution','videoFrameMode','videoExternalImage'];
 function rememberWorkspaceDraft() {
   rememberImageDraft();
   if(projectId)videoDrafts.set(projectId,{values:Object.fromEntries(videoDraftFields.map(id=>[id,$('#'+id).value])),references:[...selectedImageIds]});
 }
 function loadWorkspaceDraft() {
   loadImageDraft();
-  const draft=videoDrafts.get(projectId),defaults={videoPrompt:'',videoDuration:state.videoApiType==='openai'?'8':'6',videoRatio:'9:16',videoSize:'720x1280',videoResolution:'720p',videoFrameMode:'reference',videoExternalImage:''};
+  const draft=videoDrafts.get(projectId),defaults={videoPrompt:'',videoDuration:state.videoApiType==='openai'?'8':'6',videoRatio:'16:9',videoResolution:'720p',videoFrameMode:'reference',videoExternalImage:''};
   for(const id of videoDraftFields)$('#'+id).value=draft?.values[id]??defaults[id];
   selectedImageIds=draft?.references||[];
   for(const input of document.querySelectorAll('[data-video-option]'))input.checked=input.value===$('#'+input.dataset.videoOption).value;
@@ -145,7 +145,7 @@ function reuseGeneration(id) {
     imageReferenceIds=restored;imageSize=params.size||'864x1536';$('#imageCount').value=String(params.n??1);renderImageRatios();
   }else{
     selectedImageIds=restored;confirmedIds=[...new Set([...confirmedIds,...restored])];
-    const values={videoDuration:params.duration??(state.videoApiType==='openai'?8:6),videoRatio:params.ratio||'9:16',videoSize:params.videoSize||'720x1280',videoResolution:params.resolution||generationConfig.resolutionForSize(params.videoSize)||'720p',videoFrameMode:frames?'frames':'reference',videoExternalImage:''};
+    const values={videoDuration:params.duration??(state.videoApiType==='openai'?8:6),videoRatio:params.ratio||generationConfig.ratioForVideoSize(params.videoSize)||'16:9',videoResolution:params.resolution||generationConfig.resolutionForSize(params.videoSize)||'720p',videoFrameMode:frames?'frames':'reference',videoExternalImage:''};
     for(const [field,value] of Object.entries(values))$('#'+field).value=String(value);
     for(const option of document.querySelectorAll('[data-video-option]'))option.checked=option.value===$('#'+option.dataset.videoOption).value;
     updateVideoMode();syncVideoDuration('number',true);
@@ -492,7 +492,7 @@ $('#videoDuration').addEventListener('input',()=>syncVideoDuration('number'));
 $('#videoDuration').addEventListener('change',()=>syncVideoDuration('number',true));
 $('#videoOptions').addEventListener('change',event=>{
   const field=event.target.dataset.videoOption;
-  if(!['videoRatio','videoSize','videoResolution','videoFrameMode'].includes(field))return;
+  if(!['videoRatio','videoResolution','videoFrameMode'].includes(field)||event.target.disabled)return;
   $('#'+field).value=event.target.value;
   if(field==='videoFrameMode')renderVideo();
   if(field==='videoResolution')updateVideoMode();
@@ -501,8 +501,12 @@ $('#videoOptions').addEventListener('change',event=>{
 function updateVideoMode() {
   const type = state.videoApiType || 'openai';
   const kyy = type === 'kyyReactApi';
-  $('#videoRatioWrap').hidden = type === 'openai';
-  $('#videoSizeWrap').hidden = type !== 'openai';
+  const ratios=generationConfig.videoRatios(type),ratio=$('#videoRatio');
+  if(!ratios.includes(ratio.value))ratio.value='16:9';
+  for(const input of document.querySelectorAll('[data-video-option="videoRatio"]')){
+    input.disabled=!ratios.includes(input.value);input.checked=input.value===ratio.value;
+  }
+  $('#videoRatioHint').textContent='选择输出画幅比例；自适应由模型根据输入素材确定。';
   $('#videoResolutionWrap').hidden = false;
   $('#videoFrameModeWrap').hidden = !kyy && type !== 'openai';
   const limits = generationConfig.videoLimits(state.generation);
@@ -510,11 +514,6 @@ function updateVideoMode() {
   if(!limits.resolutions.includes(resolution.value))resolution.value=limits.resolutions.includes('720p')?'720p':limits.resolutions[0];
   for(const input of document.querySelectorAll('[data-video-option="videoResolution"]')){
     input.closest('label').hidden=!limits.resolutions.includes(input.value);input.disabled=!limits.resolutions.includes(input.value);input.checked=input.value===resolution.value;
-  }
-  if(type==='openai'){
-    const sizes=generationConfig.videoSizes(resolution.value),current=$('#videoSize').value;
-    if(!sizes.includes(current)){const [w,h]=current.split('x').map(Number);$('#videoSize').value=sizes[w>h?1:0];}
-    setStableMarkup($('#videoSizeOptions'),sizes.map(size=>'<label class="video-option"><input type="radio" name="videoSizeChoice" data-video-option="videoSize" value="'+size+'" '+(size===$('#videoSize').value?'checked':'')+'/><span>'+size+'</span></label>').join(''));
   }
   $('#videoDuration').min = String(limits.min);
   $('#videoDuration').max = String(limits.max);
@@ -631,7 +630,7 @@ async function generateVideo() {
   const records = selectedImageIds.filter(id => confirmedIds.includes(id)).map(media).filter(Boolean); if (!records.length) return showToast('请先从素材确认区选择视频素材');
   const type = state.videoApiType || 'openai'; const external = $('#videoExternalImage').value.trim();
   if (['kyyReactApi','openai'].includes(type) && $('#videoFrameMode').value === 'reference' && records.length > 9) return showToast('最多选择 9 张参考图片');
-  const params = { duration:Number($('#videoDuration').value), resolution:$('#videoResolution').value, ...(type === 'openai' ? { videoSize:$('#videoSize').value } : { ratio:$('#videoRatio').value }) };
+  const params = { duration:Number($('#videoDuration').value), resolution:$('#videoResolution').value, ratio:$('#videoRatio').value };
   let body = { kind:'video', prompt, params, inputImageUrl:external || null };
   if (['kyyReactApi','openai'].includes(type)) {
     if ($('#videoFrameMode').value === 'frames') { if (records.length > 2 || !records.length) return showToast('首尾帧模式请选择 1 或 2 张图片'); body.videoMedia = external ? {} : { firstImageId:records[0].id, lastImageId:records[1]?.id || '' }; if(external){body.params.firstImage=external;body.inputImageUrl=null;} }

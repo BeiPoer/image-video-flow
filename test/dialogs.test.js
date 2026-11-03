@@ -29,5 +29,6 @@ test('cancel controls stay non-submit and both generation prompts retain input l
   for(const [,body] of dialogs)for(const [,attrs] of body.matchAll(/<button\b([^>]*data-close[^>]*)>/g))assert.match(attrs,/type="button"/);
   assert.match(html,/id="imagePrompt"[^>]*maxlength="32000"[^>]*required/);
   assert.match(html,/id="videoPrompt"[^>]*maxlength="32000"/);
-  assert.match(html,/id="videoSize"/);
+  assert.match(html,/id="videoRatio"/);
+  assert.doesNotMatch(html,/id="videoSize"/);
 });

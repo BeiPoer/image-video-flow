@@ -1,4 +1,12 @@
 export const resolutions = ['480p', '720p', '1080p', '4k'];
+export function videoRatios() {
+  return ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9', 'adaptive'];
+}
+export function ratioForVideoSize(size) {
+  if (!resolutionForSize(size)) return undefined;
+  const [width, height] = size.split('x').map(Number);
+  return width > height ? '16:9' : '9:16';
+}
 export const defaults = {
   OPENAI_IMAGE_PRICE: '',
   VIDEO_RESOLUTIONS: resolutions.join(','),

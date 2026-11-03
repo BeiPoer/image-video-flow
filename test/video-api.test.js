@@ -4,6 +4,39 @@ import { generateVideo, videoRequest } from '../video-api.js';
 import { defaults, validateSettings } from '../model-settings.js';
 const config = { ...defaults, VIDEO_API_TYPE: 'volcengine', SEEDANCE_BASE_URL: 'https://provider.example/root/', SEEDANCE_API_KEY: 'video-mock-secret' };
 const png = 'data:image/png;base64,aW1hZ2U=';
+test('OpenAI-compatible ratios and resolution reach Seedance metadata in every input mode', () => {
+  const cfg={...config,VIDEO_API_TYPE:'openai'};
+  const modes=[{}, {referenceImages:[]}, {referenceImages:['https://media.example.test/ref.png']}, {firstImage:'https://media.example.test/first.png',lastImage:'https://media.example.test/last.png'}];
+  for(const ratio of ['16:9','9:16','1:1','4:3','3:4','21:9','adaptive']){
+    for(const resolution of ['480p','720p','1080p','4k']){
+      for(const mode of modes){
+        const {body,path}=videoRequest('test',null,{ratio,resolution,...mode},cfg);
+        assert.equal(path,'/videos');assert.equal(body.metadata.ratio,ratio);assert.equal(body.metadata.resolution,resolution);
+        if(!['16:9','9:16'].includes(ratio))assert.equal(Object.hasOwn(body,'size'),false,'ratio extensions must not send a conflicting pixel size');
+        if(mode.referenceImages?.length)assert.equal(body.metadata.content[0].role,'reference_image');
+        if(mode.firstImage)assert.deepEqual(body.metadata.content.map(item=>item.role),['first_frame','last_frame']);
+      }
+    }
+    const single=videoRequest('single',png,{ratio,resolution:'720p'},cfg).body;
+    assert.equal(single.metadata.ratio,ratio);assert.deepEqual(single.input_reference,{image_url:png});
+  }
+  const legacy=videoRequest('legacy',null,{videoSize:'1280x720'},cfg).body;
+  assert.equal(legacy.size,'1280x720');assert.deepEqual(legacy.metadata,{ratio:'16:9',resolution:'720p'});
+  assert.throws(()=>videoRequest('bad',null,{ratio:'2:1'},cfg),/画幅比例/);
+  assert.throws(()=>videoRequest('conflict',null,{ratio:'1:1',videoSize:'1280x720'},cfg),/画幅比例不匹配/);
+  assert.throws(()=>videoRequest('conflict',null,{ratio:'adaptive',videoSize:'1280x720'},cfg),/画幅比例不匹配/);
+});
+
+test('OpenAI-compatible adaptive and square requests retain ratio metadata over HTTP', async()=>{
+  for(const ratio of ['adaptive','1:1']){
+    const mock=mockCalls([{path:'/videos',method:'POST',value:{id:'ratio-video',status:'completed',video_url:'https://example.com/result.mp4'},check:body=>{
+      assert.deepEqual(body.metadata,{ratio,resolution:'720p',content:[{type:'image_url',image_url:{url:'https://example.com/ref.png'},role:'reference_image'}]});
+      assert.equal(body.size,undefined);
+    }}]);
+    const result=await generateVideo('test',null,{ratio,resolution:'720p',referenceImages:['https://example.com/ref.png']},{...config,VIDEO_API_TYPE:'openai'},undefined,mock.options);
+    assert.equal(result.url,'https://example.com/result.mp4');assert.equal(mock.calls.length,1);
+  }
+});
 function mockCalls(steps) {
   const calls = [];
   const fetch = async (url, init) => {

@@ -50,7 +50,7 @@ test('saved results refill prompts, ordered reference IDs and generation setting
   assert.deepEqual(data.projects[0].canvas.hiddenNodeIds,[]);assert.match(node('imagePromptHighlight').innerHTML,/@图1/);
   await run('refresh()');assert.equal(run('JSON.stringify(imageReferenceIds)'),'["a2","a1"]','polling preserves restored references');
   run("reuseGeneration('video')");await run('projectSaveQueue');
-  assert.equal(node('videoPrompt').value,'从 @图1 过渡到 @图2');assert.equal(node('videoDuration').value,'12');assert.equal(node('videoSize').value,'1280x720');assert.equal(node('videoFrameMode').value,'frames');
+  assert.equal(node('videoPrompt').value,'从 @图1 过渡到 @图2');assert.equal(node('videoDuration').value,'12');assert.equal(node('videoRatio').value,'16:9');assert.equal(node('videoResolution').value,'720p');assert.equal(node('videoFrameMode').value,'frames');
   assert.equal(run('JSON.stringify(selectedImageIds)'),'["a2","a1"]');assert.deepEqual(data.projects[0].canvas.assetIds,['a2','a1']);
   assert.ok(choices.find(option=>option.dataset.videoOption==='videoFrameMode'&&option.value==='frames').checked);
   assert.match(node('videoPicker').innerHTML,/图1 · 首帧/);assert.match(node('videoPicker').innerHTML,/图2 · 尾帧/);

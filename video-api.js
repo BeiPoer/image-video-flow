@@ -31,8 +31,8 @@ export function videoRequest(prompt, image, params = {}, config) {
   if (!Number.isInteger(duration) || duration < limits.min || duration > limits.max) invalid(`视频时长必须为 ${limits.min}–${limits.max} 之间的整数`);
   const resolution = params.resolution || generationConfig.resolutionForSize(params.videoSize) || (limits.resolutions.includes('720p') ? '720p' : limits.resolutions[0]);
   if (!limits.resolutions.includes(resolution)) invalid('该分辨率未在模型设置中启用');
-  const ratio = params.ratio || '9:16';
-  if (!['16:9', '9:16', '1:1', '4:3', '3:4', '21:9', 'adaptive'].includes(ratio)) invalid('不支持的视频画幅比例');
+  const ratio = params.ratio || generationConfig.ratioForVideoSize(params.videoSize) || '9:16';
+  if (!generationConfig.videoRatios().includes(ratio)) invalid('不支持的视频画幅比例');
   function checkImage(image) {
     if (typeof image !== 'string' || !image) invalid('参考图必须是 URL 或图片数据');
     if (/^assetId:\/\/[A-Za-z0-9_-]+$/.test(image)) {
@@ -49,8 +49,15 @@ export function videoRequest(prompt, image, params = {}, config) {
   const body = { model: config.SEEDANCE_MODEL, prompt: prompt.trim() };
   if (type === 'openai') {
     const size = params.videoSize || ({ '9:16': generationConfig.videoSizes(resolution)[0], '16:9': generationConfig.videoSizes(resolution)[1] })[ratio];
-    if (!size || !/^\d{3,4}x\d{3,4}$/.test(size)) invalid('OpenAI Video 需要明确的视频尺寸，例如 720x1280');
-    if (generationConfig.resolutionForSize(size) !== resolution) invalid('视频尺寸与所选分辨率不匹配');
+    if (size) {
+      if (!/^\d{3,4}x\d{3,4}$/.test(size)) invalid('视频尺寸格式无效，例如 720x1280');
+      if (generationConfig.resolutionForSize(size) !== resolution) invalid('视频尺寸与所选分辨率不匹配');
+      if (generationConfig.ratioForVideoSize(size) !== ratio) invalid('视频尺寸与所选画幅比例不匹配');
+    }
+    // New API's Seedance plugin forwards metadata to Ark, including adaptive ratio.
+    // Keep legacy pixel sizes where available; never invent a fixed size for adaptive.
+    const metadata = { ratio, resolution };
+    const specification = { seconds:String(duration), ...(size?{size}:{}), metadata };
     const lists=[params.referenceImages??[],params.referenceVideos??[],params.referenceAudios??[]];
     if (!lists.every(Array.isArray)) invalid('参考素材必须是列表');
     if (lists[0].length>9||lists[1].length>3||lists[2].length>3) invalid('参考素材数量超过接口限制（图片 9、视频 3、音频 3）');
@@ -66,9 +73,10 @@ export function videoRequest(prompt, image, params = {}, config) {
       for (const [values,kind] of [[videos,'video'],[audios,'audio']]) for (const url of values) content.push({type:kind+'_url',[kind+'_url']:{url:mediaUrl(url)},role:'reference_'+kind});
       for (const [value,role] of [[params.firstImage,'first_frame'],[params.lastImage,'last_frame']]) if(value)content.push({type:'image_url',image_url:{url:checkImage(value)},role});
       // New API's Seedance adapter forwards metadata.content with explicit reference/frame roles.
-      return {type,path:'/videos',body:{...body,seconds:String(duration),size,...(content.length?{metadata:{content}}:{})}};
+      if(content.length)metadata.content=content;
+      return {type,path:'/videos',body:{...body,...specification}};
     }
-    return { type, path: '/videos', body: { ...body, seconds: String(duration), size, ...(image ? { input_reference: { image_url: image } } : {}) } };
+    return { type, path: '/videos', body: { ...body, ...specification, ...(image ? { input_reference: { image_url: image } } : {}) } };
   }
   if (type === 'kyyReactApi') {
     const images=params.referenceImages||[], videos=params.referenceVideos||[], audios=params.referenceAudios||[];
